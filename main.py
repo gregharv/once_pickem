@@ -1,5 +1,5 @@
 from fasthtml.common import *
-from auth import bware, login, logout, auth_redirect
+from auth import bware, login, logout, auth_redirect, set_github_secret, get_github_client
 from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, GameResult
 from datetime import datetime, timedelta
 from itertools import groupby
@@ -202,6 +202,10 @@ else:  # create a modal app, which can be imported in another file or used with 
     # Create a Modal volume
     volume = modal.Volume.from_name("once-pickem-db", create_if_missing=True)
 
+    # Create Modal secrets
+    odds_api_secret = modal.Secret.from_name("odds-api-key")
+    github_secret = modal.Secret.from_name("github-client-secret")
+
     image = (modal.Image.debian_slim()
              .pip_install_from_requirements(Path(__file__).parent / "requirements.txt")
              .copy_local_file("schedule.parquet", "/app/schedule.parquet"))
@@ -210,11 +214,13 @@ else:  # create a modal app, which can be imported in another file or used with 
         image=image,
         allow_concurrent_inputs=1000,  # async functions can handle multiple inputs
         volumes={"/data": volume},  # Mount the volume to /data
+        secrets=[odds_api_secret, github_secret],  # Include both secrets
     )
     @modal.asgi_app()
     def fastapi_app():
         import os
         os.environ['MODAL_ENVIRONMENT'] = 'true'  # Set this environment variable
+        set_github_secret(github_secret)  # Pass the github_secret to auth.py
         return app
 
     # Export the ASGI app as the public interface of the Modal app

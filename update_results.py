@@ -17,7 +17,7 @@ image = (modal.Image.debian_slim()
          .copy_local_file("schedule.parquet", "/app/schedule.parquet"))
 
 def fetch_and_process_results():
-    api_key = os.environ.get('ODDS_API_KEY')
+    api_key = os.environ['ODDS_API_KEY']
     if not api_key:
         raise ValueError("API key not found. Please set the ODDS_API_KEY environment variable.")
 
@@ -57,13 +57,13 @@ def fetch_and_process_results():
 # Create a Modal app
 update_results_app = modal.App("update_results")
 
-secret = modal.Secret.from_name("odds-api-key")
+odds_api_secret = modal.Secret.from_name("odds-api-key")
 
 @update_results_app.function(
     image=image,
     schedule=modal.Cron("0 8 * * 5,1"),  # Runs at 3:00 AM EST every Friday and Monday
     volumes={"/data": volume},
-    secrets=[secret]
+    secrets=[odds_api_secret]
 )
 def update_results_friday_monday():
     fetch_and_process_results()
@@ -72,7 +72,7 @@ def update_results_friday_monday():
     image=image,
     schedule=modal.Cron("0 22 * * 0,1"),  # Runs at 5:00 PM EST every Sunday and 8:00 PM EST every Sunday (1 AM UTC Monday)
     volumes={"/data": volume},
-    secrets=[secret]
+    secrets=[odds_api_secret]
 )
 def update_results_sunday():
     fetch_and_process_results()

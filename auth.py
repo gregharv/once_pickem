@@ -3,13 +3,14 @@ from fasthtml.oauth import GitHubAppClient
 from database import db
 from sqlite_minutils.db import NotFoundError
 import os
-from dotenv import load_dotenv
+import modal
 
-# Load environment variables from .env file
-load_dotenv()
+github_secret = None
+client = None
 
-app = FastHTML()
-rt = app.route
+def set_github_secret(secret):
+    global github_secret
+    github_secret = secret
 
 # Set the base URL based on the environment
 if os.environ.get('MODAL_ENVIRONMENT'):
@@ -18,11 +19,22 @@ else:
     base_url = "http://localhost:5001"
 
 # Set up the GitHub OAuth client
-client = GitHubAppClient(
-    client_id="Ov23liSrrMn8z5gaKkPd",
-    client_secret=os.environ.get('GITHUB_CLIENT_SECRET'),
-    redirect_uri=f"{base_url}/auth_redirect",
-)
+def get_github_client():
+    global client
+    if client is not None:
+        return client
+    
+    client_secret = os.environ['GITHUB_CLIENT_SECRET']
+
+    if not client_secret:
+        raise ValueError("GitHub client secret is not available")
+
+    client = GitHubAppClient(
+        client_id="Ov23liSrrMn8z5gaKkPd",
+        client_secret=client_secret,
+        redirect_uri=f"{base_url}/auth_redirect",
+    )
+    return client
 
 # Beforeware function for authentication
 def before(req, session):
@@ -46,22 +58,20 @@ def before(req, session):
 bware = Beforeware(before, skip=['/login', '/auth_redirect'])
 
 # Login page
-@rt('/login')
 def login(): 
     return Div(P("You are not logged in."), 
-               A('Log in with GitHub', href=client.login_link(redirect_uri=f"{base_url}/auth_redirect")))
+               A('Log in with GitHub', href=get_github_client().login_link(redirect_uri=f"{base_url}/auth_redirect")))
 
 # Logout function
-@rt('/logout')
 def logout(session):
     session.pop('user_id', None)
     return RedirectResponse('/login', status_code=303)
 
 # Auth redirect function
-@rt('/auth_redirect')
 def auth_redirect(code:str, session, state:str=None):
     if not code: return "No code provided!"
     try:
+        client = get_github_client()
         info = client.retr_info(code, redirect_uri=f"{base_url}/auth_redirect")
         user_id = info[client.id_key]
         user_name = info.get('name', user_id)  # Get the user's name, fallback to user_id if not available
