@@ -8,8 +8,33 @@ from pathlib import Path
 import requests
 import pandas as pd
 import pytz
+from fastapi.staticfiles import StaticFiles
 
-app = FastHTML(before=bware)
+import os
+import modal
+
+# Check if we're running in a Modal environment
+is_modal = os.environ.get('MODAL_ENVIRONMENT') == 'true'
+
+if is_modal:
+    print(f"Contents of /app: {os.listdir('/app')}")
+    print(f"Contents of /app/assets: {os.listdir('/app/assets')}")
+    assets_dir = "/app/assets"
+else:
+    print("Running in local environment")
+    assets_dir = "assets"
+
+# Define the _not_found function
+def _not_found(request, exc):
+    return Titled("404 Not Found", P("The page you're looking for doesn't exist."))
+
+app = FastHTML(before=bware,
+               exception_handlers={404: _not_found},
+               hdrs=(picolink,
+                     Link(rel='stylesheet', href='/assets/styles.css', type='text/css'),
+                     Style(':root { --pico-font-size: 100%; }'),
+                     SortableJS('.sortable'))
+                )
 rt = app.route
 
 # Helper function to get the current time in EST
@@ -62,37 +87,64 @@ def home(auth, session):
     # Get user's picks, defaulting to an empty dictionary if there are none
     user_picks = {p.game_id: p.pick for p in get_user_picks(auth) or []}
 
-    game_list = []
+    # Create sidebar with leaderboard link and links to each week
+    sidebar_links = [
+        A("Leaderboard", href="/leaderboard"),
+        Br(),  # Add a line break
+        H3("Weeks")
+    ]
+    week_tables = []
     for week, week_games in grouped_games:
         week_games = list(week_games)
         user_week_picks = sum(1 for game in week_games if game.game_id in user_picks)
-        week_header = H2(f"Week {week} - {user_week_picks}/2 picks made")
-        week_games_list = []
-        for game in week_games:
-            user_pick = user_picks.get(game.game_id, 'Not picked')
-            remove_link = ""
-            if user_pick != 'Not picked':
-                remove_link = A("Remove", 
-                                href=f"/remove_pick/{game.game_id}", 
-                                hx_post=f"/remove_pick/{game.game_id}",
-                                hx_target=f"#game-{game.game_id}",
-                                hx_swap="outerHTML")
-            
-            result_info = ""
-            if game.completed:
-                winner = game.home_team if game.home_team_score > game.away_team_score else game.away_team if game.away_team_score > game.home_team_score else "Tie"
-                result_info = f" - Final: {game.away_team} {game.away_team_score}, {game.home_team} {game.home_team_score} - Winner: {winner}"
-            
-            game_item = Li(f"{game.away_team} @ {game.home_team} - {game.datetime}",
-                           A("Pick", href=f"/pick/{game.game_id}") if to_est(datetime.fromisoformat(game.datetime)) >= get_current_est_time() else "",
-                           f" - Your pick: {user_pick}", remove_link, result_info,
-                           id=f"game-{game.game_id}")
-            week_games_list.append(game_item)
-        game_list.extend([week_header, Ul(*week_games_list)])
+        week_header = H2(f"Week {week} - {user_week_picks}/2 picks made", id=f"week-{week}")
+        sidebar_links.append(A(f"Week {week}", href=f"#week-{week}"))
+        
+        table = Table(
+            Tr(Th("Away Team"), Th("Home Team"), Th("Date/Time"), Th("Your Pick"), Th("Action"), Th("Result")),
+            *[Tr(
+                Td(game.away_team),
+                Td(game.home_team),
+                Td(game.datetime),
+                Td(user_picks.get(game.game_id, 'Not picked')),
+                Td(
+                    A("Pick", href=f"/pick/{game.game_id}") if to_est(datetime.fromisoformat(game.datetime)) >= get_current_est_time() else "",
+                    " ",
+                    A("Remove", 
+                      href=f"/remove_pick/{game.game_id}", 
+                      hx_post=f"/remove_pick/{game.game_id}",
+                      hx_target=f"#game-{game.game_id}",
+                      hx_swap="outerHTML") if user_picks.get(game.game_id, 'Not picked') != 'Not picked' else ""
+                ),
+                Td(
+                    f"{game.away_team} {game.away_team_score}", Br(),
+                    f"{game.home_team} {game.home_team_score}", Br(),
+                    Span(
+                        f"Winner: {game.home_team if game.home_team_score > game.away_team_score else game.away_team if game.away_team_score > game.home_team_score else 'Tie'}",
+                        style=f"color: {'green' if game.completed and user_picks.get(game.game_id) == (game.home_team if game.home_team_score > game.away_team_score else game.away_team) else 'red' if game.completed and game.game_id in user_picks else 'blue'}; font-weight: bold;"
+                    ) if game.completed else ""
+                ),
+                id=f"game-{game.game_id}"
+            ) for game in week_games],
+            style="width: 100%; border-collapse: collapse;",
+        )
+        week_tables.extend([week_header, Br(), table, Br()])  # Add line breaks between elements
 
-    return Container(top, 
-                    A("View Leaderboard", href="/leaderboard"),
-                     *game_list)
+    # Create sidebar
+    sidebar = Div(
+        *sidebar_links,
+        cls="sidebar"
+    )
+
+    # Adjust main content to make room for sidebar
+    main_content = Div(
+        top, 
+        Br(),  # Add a line break after the top section
+        *week_tables,
+        cls="main-content"
+    )
+
+    return Container(sidebar, main_content)
 
 @rt('/pick/{game_id:int}')
 def get(game_id: int, auth):
@@ -181,7 +233,19 @@ def get(auth):
 # Add the login route
 @rt('/login')
 def get():
-    return login()
+    rules_explanation = Div(
+        H2("Welcome to Once Pickem!"),
+        P("Here are the rules of the game:"),
+        Ul(
+            Li("You can pick 2 teams per week."),
+            Li("You can't pick the same team twice throughout the year."),
+            Li("Make your picks before the game starts."),
+            Li("You cannot change your picks once the game have started."),
+            Li("Need help? Watch our ", A("video tutorial", href="https://www.youtube.com/watch?v=cvh0nX08nRw"))
+        ),
+        style="margin-bottom: 20px;"
+    )
+    return login(extra_content=rules_explanation)
 
 # Add the logout route
 @rt('/logout')
@@ -207,7 +271,8 @@ else:  # create a modal app, which can be imported in another file or used with 
 
     image = (modal.Image.debian_slim()
              .pip_install_from_requirements(Path(__file__).parent / "requirements.txt")
-             .copy_local_file("schedule.parquet", "/app/schedule.parquet"))
+             .copy_local_file("schedule.parquet", "/app/schedule.parquet")
+             .copy_local_dir("assets", "/app/assets"))  # Add this line
 
     @modal_app.function(
         image=image,
@@ -218,8 +283,26 @@ else:  # create a modal app, which can be imported in another file or used with 
     @modal.asgi_app()
     def fastapi_app():
         import os
-        os.environ['MODAL_ENVIRONMENT'] = 'true'  # Set this environment variable
-        set_github_secret(github_secret)  # Pass the github_secret to auth.py
+        import logging
+        from fastapi.staticfiles import StaticFiles
+
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(__name__)
+
+        # Log the current working directory and its contents
+        logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"Contents of current directory: {os.listdir()}")
+
+        # Check if the assets directory exists
+        if os.path.exists("/app/assets"):
+            logger.info("Assets directory exists")
+            logger.info(f"Contents of assets directory: {os.listdir('/app/assets')}")
+            app.mount("/assets", StaticFiles(directory="/app/assets"), name="assets")
+        else:
+            logger.warning("Assets directory does not exist")
+
+        os.environ['MODAL_ENVIRONMENT'] = 'true'
+        set_github_secret(github_secret)
         return app
 
     # Export the ASGI app as the public interface of the Modal app
