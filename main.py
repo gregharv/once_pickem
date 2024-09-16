@@ -1,6 +1,6 @@
 from fasthtml.common import *
 from auth import bware, login, logout, auth_redirect, set_github_secret, get_github_client
-from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, GameResult
+from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness
 from datetime import datetime, timedelta
 from itertools import groupby
 import modal
@@ -16,10 +16,13 @@ rt = app.route
 def get_current_est_time():
     return datetime.now(pytz.timezone('US/Eastern'))
 
-# Helper function to convert a naive datetime to EST
+# Helper function to convert a datetime to EST
 def to_est(dt):
     eastern = pytz.timezone('US/Eastern')
-    return eastern.localize(dt)
+    if dt.tzinfo is None:
+        return eastern.localize(dt)
+    else:
+        return dt.astimezone(eastern)
 
 # Helper function to get the week number of a game
 def get_game_week(game_datetime):
@@ -50,9 +53,6 @@ def home(auth, session):
     # Get user's picks, defaulting to an empty dictionary if there are none
     user_picks = {p.game_id: p.pick for p in get_user_picks(auth) or []}
 
-    # Get game results
-    game_results = list(db.t.game_results())
-
     game_list = []
     for week, week_games in grouped_games:
         week_games = list(week_games)
@@ -69,20 +69,10 @@ def home(auth, session):
                                 hx_target=f"#game-{game.game_id}",
                                 hx_swap="outerHTML")
             
-            # Check if the game has a result
-            est = pytz.timezone('US/Eastern')
-            game_date = datetime.fromisoformat(game.datetime).astimezone(est).date()
-            game_result = next((gr for gr in game_results 
-                                if datetime.fromisoformat(gr.commence_time).astimezone(est).date() == game_date
-                                and gr.home_team == game.home_team
-                                and gr.away_team == game.away_team), None)
-            
             result_info = ""
-            if game_result and game_result.completed:
-                home_score = game_result.home_score
-                away_score = game_result.away_score
-                winner = game.home_team if home_score > away_score else game.away_team if away_score > home_score else "Tie"
-                result_info = f" - Final: {game.away_team} {away_score}, {game.home_team} {home_score} - Winner: {winner}"
+            if game.completed:
+                winner = game.home_team if game.home_team_score > game.away_team_score else game.away_team if game.away_team_score > game.home_team_score else "Tie"
+                result_info = f" - Final: {game.away_team} {game.away_team_score}, {game.home_team} {game.home_team_score} - Winner: {winner}"
             
             game_item = Li(f"{game.away_team} @ {game.home_team} - {game.datetime}",
                            A("Pick", href=f"/pick/{game.game_id}") if to_est(datetime.fromisoformat(game.datetime)) >= get_current_est_time() else "",
@@ -161,12 +151,12 @@ def get(auth):
     all_picks = db.t.picks()
     for pick in all_picks:
         game = get_game(pick.game_id)
-        if game and to_est(datetime.fromisoformat(game.datetime)) < get_current_est_time():
+        if game and game.get('completed', False):  # Use .get() method with a default value
             user_scores[pick.user_id] = user_scores.get(pick.user_id, 0) + (1 if pick.correct else 0)
             user_total_picks[pick.user_id] = user_total_picks.get(pick.user_id, 0) + 1
             if pick.correct:
-                week = get_game_week(game.datetime)
-                user_correct_picks.setdefault(pick.user_id, []).append(f"Week {week}: {game.away_team} @ {game.home_team} - Picked: {pick.pick}")
+                week = get_game_week(game['datetime'])  # Access datetime as a dictionary key
+                user_correct_picks.setdefault(pick.user_id, []).append(f"Week {week}: {game['away_team']} @ {game['home_team']} - Picked: {pick.pick}")
     
     # Fetch user names from the database
     user_names = {}
