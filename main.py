@@ -19,6 +19,8 @@ def get_current_est_time():
 # Helper function to convert a datetime to EST
 def to_est(dt):
     eastern = pytz.timezone('US/Eastern')
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
     if dt.tzinfo is None:
         return eastern.localize(dt)
     else:
@@ -26,9 +28,16 @@ def to_est(dt):
 
 # Helper function to get the week number of a game
 def get_game_week(game_datetime):
-    game_date = to_est(datetime.fromisoformat(game_datetime))
-    season_start = to_est(datetime(game_date.year, 9, 4))  # Assuming season starts on September 4th
+    eastern = pytz.timezone('US/Eastern')
+    game_date = datetime.fromisoformat(game_datetime)
+    if game_date.tzinfo is None:
+        game_date = eastern.localize(game_date)
+    else:
+        game_date = game_date.astimezone(eastern)
+    
+    season_start = eastern.localize(datetime(game_date.year, 9, 4))  # Assuming season starts on September 4th
     return (game_date - season_start).days // 7 + 1
+
 
 # Homepage (only visible if logged in)
 @rt('/')
@@ -45,7 +54,7 @@ def home(auth, session):
     top = Grid(H1(title), login_or_user)
 
     # Sort games by datetime
-    sorted_games = sorted(games, key=lambda g: to_est(datetime.fromisoformat(g.datetime)))
+    sorted_games = sorted(games, key=lambda g: to_est(g.datetime))
     
     # Group games by week
     grouped_games = groupby(sorted_games, key=lambda g: get_game_week(g.datetime))
@@ -91,13 +100,13 @@ def get(game_id: int, auth):
     if game is None:
         return RedirectResponse('/', status_code=303)
     
-    if to_est(datetime.fromisoformat(game.datetime)) < get_current_est_time():
+    if to_est(datetime.fromisoformat(game['datetime'])) < get_current_est_time():
         return Titled("Pick Not Allowed", P("Sorry, the game time has passed. You can no longer make a pick for this game."))
     
     frm = Form(
-        H3(f"{game.away_team} @ {game.home_team}"),
-        Select(Option(game.home_team, value=game.home_team),
-               Option(game.away_team, value=game.away_team),
+        H3(f"{game['away_team']} @ {game['home_team']}"),
+        Select(Option(game['home_team'], value=game['home_team']),
+               Option(game['away_team'], value=game['away_team']),
                id='pick', name='pick'),
         Button("Submit Pick"),
         action=f'/pick/{game_id}', method='post'
@@ -110,7 +119,7 @@ def post(game_id: int, pick: str, auth):
     if game is None:
         return RedirectResponse('/', status_code=303)
     
-    if to_est(datetime.fromisoformat(game.datetime)) < get_current_est_time():
+    if to_est(datetime.fromisoformat(game['datetime'])) < get_current_est_time():
         return Titled("Pick Not Allowed", P("Sorry, the game time has passed. You can no longer make a pick for this game."))
     
     try:
@@ -126,7 +135,7 @@ def post(game_id: int, auth):
         game = get_game(game_id)
         
         # Check if the game has already started
-        if to_est(datetime.fromisoformat(game.datetime)) < get_current_est_time():
+        if to_est(datetime.fromisoformat(game['datetime'])) < get_current_est_time():
             return "Baited Bitch, nice try: You cannot remove a pick after the game has started."
         
         # Remove the pick
@@ -136,10 +145,10 @@ def post(game_id: int, auth):
                 db.t.picks.delete(pick.id)
                 break
         
-        return Li(f"{game.away_team} @ {game.home_team} - {game.datetime}",
-                  A("Pick", href=f"/pick/{game.game_id}"),
+        return Li(f"{game['away_team']} @ {game['home_team']} - {game['datetime']}",
+                  A("Pick", href=f"/pick/{game['game_id']}"),
                   " - Your pick: Not picked",
-                  id=f"game-{game_id}")
+                  id=f"game-{game['game_id']}")
     except Exception as e:
         return f"Error removing pick: {str(e)}"
     

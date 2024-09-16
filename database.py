@@ -11,6 +11,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+__all__ = ['db', 'Schedule', 'Pick', 'add_pick', 'get_user_picks', 'get_all_games', 'get_game', 'update_game_results', 'update_pick_correctness']
+
 @dataclass
 class Pick:
     id: int
@@ -109,6 +111,30 @@ Schedule = schedule.dataclass()
 Pick = picks.dataclass()
 
 # Function to add a new pick
+def to_est(dt):
+    eastern = pytz.timezone('US/Eastern')
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
+    if dt.tzinfo is None:
+        return eastern.localize(dt)
+    else:
+        return dt.astimezone(eastern)
+
+def get_game_week(game_datetime):
+    eastern = pytz.timezone('US/Eastern')
+    if isinstance(game_datetime, str):
+        game_date = datetime.fromisoformat(game_datetime)
+    else:
+        game_date = game_datetime
+    
+    if game_date.tzinfo is None:
+        game_date = eastern.localize(game_date)
+    else:
+        game_date = game_date.astimezone(eastern)
+    
+    season_start = eastern.localize(datetime(game_date.year, 9, 4))  # Assuming season starts on September 4th
+    return (game_date - season_start).days // 7 + 1
+
 def add_pick(user_id: str, game_id: int, pick: str):
     # Check if the game exists
     game = get_game(game_id)
@@ -121,10 +147,10 @@ def add_pick(user_id: str, game_id: int, pick: str):
         raise ValueError(f"You have already picked {pick} in a previous week")
 
     # Get the game's week
-    game_week = get_game_week(game.datetime)
+    game_week = get_game_week(to_est(game['datetime']))
 
     # Check if the user has already made 2 picks for this week
-    week_picks = [p for p in user_picks if get_game_week(get_game(p.game_id).datetime) == game_week]
+    week_picks = [p for p in user_picks if get_game_week(to_est(get_game(p.game_id)['datetime'])) == game_week]
     if len(week_picks) >= 2:
         raise ValueError(f"You have already made 2 picks for week {game_week}")
 
@@ -148,18 +174,6 @@ def add_pick(user_id: str, game_id: int, pick: str):
                 pick=new_pick.pick, timestamp=new_pick.timestamp, correct=new_pick.correct)
 
 # Helper function to get the week number of a game
-def get_game_week(game_datetime):
-    game_date = datetime.fromisoformat(game_datetime)
-    season_start = datetime(game_date.year, 9, 4)  # Assuming season starts on September 4th
-    return (game_date - season_start).days // 7 + 1
-
-# Function to get picks for a user
-def get_user_picks(user_id: str):
-    user_picks = picks.rows_where("user_id = ?", [user_id])
-    return [Pick(id=p['id'], user_id=p['user_id'], game_id=p['game_id'], pick=p['pick'], timestamp=p['timestamp']) 
-            for p in user_picks]
-
-# Function to get all games
 def get_all_games():
     return schedule()
 
@@ -171,7 +185,7 @@ def get_game(game_id: int):
             'game_id': game.game_id,
             'home_team': game.home_team,
             'away_team': game.away_team,
-            'datetime': game.datetime,
+            'datetime': game.datetime.isoformat() if isinstance(game.datetime, datetime) else game.datetime,
             'home_team_score': game.home_team_score,
             'away_team_score': game.away_team_score,
             'completed': game.completed
@@ -235,3 +249,6 @@ def update_pick_correctness(game_result):
             }, pk='id')
     else:
         logger.info(f"Game {game_id} is not completed or scores are not available. Skipping pick correctness update.")
+
+def get_user_picks(user_id: str):
+    return [Pick(**p) for p in picks.rows_where("user_id = ?", [user_id])]
