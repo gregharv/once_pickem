@@ -13,6 +13,42 @@ from fastapi.staticfiles import StaticFiles
 import os
 import modal
 
+# Add this near the top of your file, after the imports
+TEAM_ABBREVIATIONS = {
+    "Arizona Cardinals": "ARI",
+    "Atlanta Falcons": "ATL",
+    "Baltimore Ravens": "BAL",
+    "Buffalo Bills": "BUF",
+    "Carolina Panthers": "CAR",
+    "Chicago Bears": "CHI",
+    "Cincinnati Bengals": "CIN",
+    "Cleveland Browns": "CLE",
+    "Dallas Cowboys": "DAL",
+    "Denver Broncos": "DEN",
+    "Detroit Lions": "DET",
+    "Green Bay Packers": "GB",
+    "Houston Texans": "HOU",
+    "Indianapolis Colts": "IND",
+    "Jacksonville Jaguars": "JAX",
+    "Kansas City Chiefs": "KC",
+    "Las Vegas Raiders": "LV",
+    "Los Angeles Chargers": "LAC",
+    "Los Angeles Rams": "LAR",
+    "Miami Dolphins": "MIA",
+    "Minnesota Vikings": "MIN",
+    "New England Patriots": "NE",
+    "New Orleans Saints": "NO",
+    "New York Giants": "NYG",
+    "New York Jets": "NYJ",
+    "Philadelphia Eagles": "PHI",
+    "Pittsburgh Steelers": "PIT",
+    "San Francisco 49ers": "SF",
+    "Seattle Seahawks": "SEA",
+    "Tampa Bay Buccaneers": "TB",
+    "Tennessee Titans": "TEN",
+    "Washington Commanders": "WAS"
+}
+
 # Define your JavaScript code
 js_code = """
 document.body.addEventListener('htmx:afterOnLoad', function(event) {
@@ -36,7 +72,7 @@ app = FastHTML(before=bware,
                      Link(rel='stylesheet', href='/assets/styles.css', type='text/css'),
                      Style(':root { --pico-font-size: 100%; }'),
                      SortableJS('.sortable'),
-                     Script(js_code))  # Add the JavaScript here
+                     Script(js_code))
                 )
 rt = app.route
 
@@ -196,17 +232,20 @@ def error_response(message, game_id, auth):
     return error_modal, updated_table
 
 def create_week_table(games, user_picks, auth):
-    return Table(
-        Tr(
-            Th("Away Team", style="width: 20%;"),
-            Th("Home Team", style="width: 20%;"),
-            Th("Date/Time", style="width: 20%;"),
-            Th("Your Pick", style="width: 20%;"),
-            Th("Result", style="width: 20%;")
+    return Div(
+        Table(
+            Tr(
+                Th("Away Team", style="width: 20%;"),
+                Th("Home Team", style="width: 20%;"),
+                Th("Date/Time", style="width: 20%;"),
+                Th("Your Pick", style="width: 20%;"),
+                Th("Result", style="width: 20%;")
+            ),
+            *[create_game_row(game, user_picks.get(game.game_id, "Not picked"), auth) for game in games],
+            id=f"week-{get_game_week(games[0].datetime)}-table",
+            style="width: 100%; border-collapse: collapse;",
         ),
-        *[create_game_row(game, user_picks.get(game.game_id, "Not picked"), auth) for game in games],
-        id=f"week-{get_game_week(games[0].datetime)}-table",
-        style="width: 100%; border-collapse: collapse;",
+        cls="table-container"
     )
 
 def create_game_row(game, pick, auth):
@@ -214,26 +253,54 @@ def create_game_row(game, pick, auth):
     current_time = get_current_est_time()
     game_started = game_time < current_time
 
+    away_team_full = game.away_team
+    home_team_full = game.home_team
+    away_team_short = TEAM_ABBREVIATIONS.get(away_team_full, away_team_full)
+    home_team_short = TEAM_ABBREVIATIONS.get(home_team_full, home_team_full)
+
+    # Format the date for both full and short versions
+    full_date = format_est_time(game.datetime)
+    short_date = game_time.strftime("%a")  # This will give us the abbreviated day of the week
+
+    # Get the short name for the picked team
+    pick_short = TEAM_ABBREVIATIONS.get(pick, pick) if pick != "Not picked" else ""
+
     return Tr(
         Td(
-            A(game.away_team, 
-              hx_post=f"/pick/{game.game_id}/{game.away_team}",
-              hx_target=f"#week-{get_game_week(game.datetime)}-table",
-              hx_swap="outerHTML",
-              **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
-            ) if not game_started else game.away_team
+            A(
+                Span(away_team_full, cls="team-name-full"),
+                Span(away_team_short, cls="team-name-short"),
+                hx_post=f"/pick/{game.game_id}/{game.away_team}",
+                hx_target=f"#week-{get_game_week(game.datetime)}-table",
+                hx_swap="outerHTML",
+                **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
+            ) if not game_started else Span(
+                Span(away_team_full, cls="team-name-full"),
+                Span(away_team_short, cls="team-name-short")
+            )
         ),
         Td(
-            A(game.home_team, 
-              hx_post=f"/pick/{game.game_id}/{game.home_team}",
-              hx_target=f"#week-{get_game_week(game.datetime)}-table",
-              hx_swap="outerHTML",
-              **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
-            ) if not game_started else game.home_team
+            A(
+                Span(home_team_full, cls="team-name-full"),
+                Span(home_team_short, cls="team-name-short"),
+                hx_post=f"/pick/{game.game_id}/{game.home_team}",
+                hx_target=f"#week-{get_game_week(game.datetime)}-table",
+                hx_swap="outerHTML",
+                **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
+            ) if not game_started else Span(
+                Span(home_team_full, cls="team-name-full"),
+                Span(home_team_short, cls="team-name-short")
+            )
         ),
-        Td(format_est_time(game.datetime)),  # Use the new formatting function here
         Td(
-            Span(pick) if pick != "Not picked" else "",
+            Span(full_date, cls="date-full"),
+            Span(short_date, cls="date-short")
+        ),
+        Td(
+            Span(
+                Span(pick, cls="team-name-full"),
+                Span(pick_short, cls="team-name-short")
+            ) if pick != "Not picked" else "",
             " ",
             A("×", 
               hx_post=f"/remove_pick/{game.game_id}",
@@ -244,10 +311,10 @@ def create_game_row(game, pick, auth):
             id=f"pick-{game.game_id}"
         ),
         Td(
-            (f"{game.away_team} {game.away_team_score}", Br(),
-            f"{game.home_team} {game.home_team_score}", Br(),
+            (f"{away_team_short} {game.away_team_score}", Br(),
+            f"{home_team_short} {game.home_team_score}", Br(),
             Span(
-                f"Winner: {game.home_team.split()[-1] if game.home_team_score > game.away_team_score else game.away_team.split()[-1] if game.away_team_score > game.home_team_score else 'Tie'}",
+                f"Winner: {home_team_short if game.home_team_score > game.away_team_score else away_team_short if game.away_team_score > game.home_team_score else 'Tie'}",
                 style=f"color: {'green' if game.completed and pick == (game.home_team if game.home_team_score > game.away_team_score else game.away_team) else 'red' if game.completed and pick != 'Not picked' else 'blue'}; font-weight: bold;"
             )) if game.completed else ""
         ),

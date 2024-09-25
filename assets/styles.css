@@ -64,3 +64,87 @@ body {
     margin-left: 220px;
     padding: 20px;
 }
+
+/* New mobile-friendly styles */
+@media (max-width: 768px) {
+    .sidebar {
+        position: static;
+        width: 100%;
+        padding: 10px;
+    }
+
+    .main-content {
+        margin-left: 0;
+        padding: 10px;
+    }
+
+    table {
+        font-size: 14px;
+    }
+
+    th, td {
+        padding: 6px;
+    }
+
+    /* Make table scrollable horizontally on small screens */
+    .table-container {
+        overflow-x: auto;
+    }
+
+    /* Adjust grid layout for smaller screens */
+    .grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Increase touch target size for buttons and links */
+    button, .button, a {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 10px;
+    }
+
+    /* Improve readability on small screens */
+    body {
+        font-size: 16px;
+        line-height: 1.5;
+    }
+
+    /* Adjust headings for better hierarchy on small screens */
+    h1 { font-size: 24px; }
+    h2 { font-size: 20px; }
+    h3 { font-size: 18px; }
+
+    /* Improve form elements on mobile */
+    input, select, textarea {
+        font-size: 16px; /* Prevents iOS zoom on focus */
+        max-width: 100%;
+    }
+}
+
+/* New styles for team names and date display */
+.team-name-full, .date-full {
+    display: inline;
+}
+.team-name-short, .date-short {
+    display: none;
+}
+
+/* Mobile-specific styles */
+@media (max-width: 768px) {
+    .team-name-full, .date-full {
+        display: none;
+    }
+    .team-name-short, .date-short {
+        display: inline;
+    }
+
+    /* ... (rest of the mobile styles) ... */
+}
+
+/* Existing accessibility styles */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation: none !important;
+        transition: none !important;
+    }
+}
