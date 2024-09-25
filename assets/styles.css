@@ -10,21 +10,7 @@ th, td {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-/* Adjust widths for specific columns */
-th:nth-child(1), td:nth-child(1),
-th:nth-child(2), td:nth-child(2),
-th:nth-child(3), td:nth-child(3),
-th:nth-child(4), td:nth-child(4) {
-    width: 16%; /* 4 columns at 16% each */
-}
-th:nth-child(5), td:nth-child(5) {
-    width: 12%; /* Make the 5th column smaller */
-}
-th:nth-child(6), td:nth-child(6) {
-    width: 24%; /* Make the 6th column bigger */
-    white-space: normal; /* Allow text to wrap */
-    word-wrap: break-word; /* Break long words if necessary */
+    width: 20% !important;
 }
 th {
     background-color: #f2f2f2;

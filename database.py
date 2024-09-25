@@ -102,8 +102,26 @@ users = db.t.users
 if users not in db.t:
     users.create(dict(
         user_id=str,
-        name=str
+        name=str,
+        dname=str  # Add this new column
     ), pk='user_id')
+else:
+    # Check if the 'dname' column exists, if not, add it
+    try:
+        db.execute('SELECT dname FROM users LIMIT 1')
+    except Exception:
+        db.execute('ALTER TABLE users ADD COLUMN dname TEXT')
+
+# Add the initial mappings
+initial_mappings = {
+    '18033555': 'Greg',
+    '51495669': 'Jason',
+    '182435157': 'Roger'
+}
+
+for user_id, dname in initial_mappings.items():
+    users.upsert({"user_id": user_id, "dname": dname}, pk='user_id')
+
 Users = users.dataclass()
 
 # Create dataclass for Schedule and Pick
@@ -175,7 +193,16 @@ def add_pick(user_id: str, game_id: int, pick: str):
 
 # Helper function to get the week number of a game
 def get_all_games():
-    return schedule()
+    games = schedule()
+    return [Schedule(
+        game_id=game.game_id,
+        datetime=game.datetime,
+        home_team=game.home_team,
+        away_team=game.away_team,
+        home_team_score=game.home_team_score,
+        away_team_score=game.away_team_score,
+        completed=game.completed
+    ) for game in games]
 
 # Function to get a specific game
 def get_game(game_id: int):
@@ -252,3 +279,18 @@ def update_pick_correctness(game_result):
 
 def get_user_picks(user_id: str):
     return [Pick(**p) for p in picks.rows_where("user_id = ?", [user_id])]
+
+# Add a new function to update user's display name
+def update_user_dname(user_id: str, new_dname: str):
+    users.update({"user_id": user_id, "dname": new_dname}, pk='user_id')
+
+# Modify the existing function to include dname
+def get_user_info(user_id: str):
+    user = users.get(user_id)
+    if user:
+        return {
+            'user_id': user['user_id'],
+            'name': user['name'],
+            'dname': user['dname']
+        }
+    return None

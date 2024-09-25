@@ -1,6 +1,6 @@
 from fasthtml.common import *
 from auth import bware, login, logout, auth_redirect, set_github_secret, get_github_client
-from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness
+from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, update_user_dname, get_user_info
 from datetime import datetime, timedelta
 from itertools import groupby
 import modal
@@ -13,16 +13,18 @@ from fastapi.staticfiles import StaticFiles
 import os
 import modal
 
-# Check if we're running in a Modal environment
-is_modal = os.environ.get('MODAL_ENVIRONMENT') == 'true'
+# Define your JavaScript code
+js_code = """
+document.body.addEventListener('htmx:afterOnLoad', function(event) {
+    if (event.detail.elt.id === 'error-modal' && event.detail.xhr.status !== 200) {
+        document.getElementById('error-modal').setAttribute('open', 'true');
+    }
+});
 
-if is_modal:
-    print(f"Contents of /app: {os.listdir('/app')}")
-    print(f"Contents of /app/assets: {os.listdir('/app/assets')}")
-    assets_dir = "/app/assets"
-else:
-    print("Running in local environment")
-    assets_dir = "assets"
+function closeErrorModal() {
+    document.getElementById('error-modal').removeAttribute('open');
+}
+"""
 
 # Define the _not_found function
 def _not_found(request, exc):
@@ -33,7 +35,8 @@ app = FastHTML(before=bware,
                hdrs=(picolink,
                      Link(rel='stylesheet', href='/assets/styles.css', type='text/css'),
                      Style(':root { --pico-font-size: 100%; }'),
-                     SortableJS('.sortable'))
+                     SortableJS('.sortable'),
+                     Script(js_code))  # Add the JavaScript here
                 )
 rt = app.route
 
@@ -63,6 +66,15 @@ def get_game_week(game_datetime):
     season_start = eastern.localize(datetime(game_date.year, 9, 4))  # Assuming season starts on September 4th
     return (game_date - season_start).days // 7 + 1
 
+# Helper function to convert a datetime to EST and format it nicely
+def format_est_time(dt):
+    eastern = pytz.timezone('US/Eastern')
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
+    if dt.tzinfo is None:
+        dt = pytz.utc.localize(dt)
+    est_time = dt.astimezone(eastern)
+    return est_time.strftime("%a, %b %d, %Y at %I:%M %p")
 
 # Homepage (only visible if logged in)
 @rt('/')
@@ -70,14 +82,18 @@ def home(auth, session):
     games = get_all_games()
     try:
         user = db.t.users.get(auth)
-        user_name = user.name
+        user_name = user.dname or user.name or auth  # Use dname if available, then name, then auth
     except:
         user_name = auth  # Fallback to using auth (user_id) if user not found in database
     
-    title = f"Welcome, {user_name}"
-    login_or_user = A("Logout", href='/logout', style='text-align: right')
-    top = Grid(H1(title), login_or_user)
-
+    welcome_message = f"Welcome, {user_name}"
+    login_or_user = Grid(
+        A("Change Display Name", href=f"/change_dname/{auth}", hx_get=f"/change_dname/{auth}", hx_target="#dname-form"),
+        A("Logout", href='/logout'),
+        columns="1fr 1fr",
+        style="text-align: right; gap: 10px;"
+    )
+    
     # Sort games by datetime
     sorted_games = sorted(games, key=lambda g: to_est(g.datetime))
     
@@ -100,35 +116,8 @@ def home(auth, session):
         week_header = H2(f"Week {week} - {user_week_picks}/2 picks made", id=f"week-{week}")
         sidebar_links.append(A(f"Week {week}", href=f"#week-{week}"))
         
-        table = Table(
-            Tr(Th("Away Team"), Th("Home Team"), Th("Date/Time"), Th("Your Pick"), Th("Action"), Th("Result")),
-            *[Tr(
-                Td(game.away_team),
-                Td(game.home_team),
-                Td(game.datetime),
-                Td(user_picks.get(game.game_id, 'Not picked')),
-                Td(
-                    A("Pick", href=f"/pick/{game.game_id}") if to_est(datetime.fromisoformat(game.datetime)) >= get_current_est_time() else "",
-                    " ",
-                    A("Remove", 
-                      href=f"/remove_pick/{game.game_id}", 
-                      hx_post=f"/remove_pick/{game.game_id}",
-                      hx_target=f"#game-{game.game_id}",
-                      hx_swap="outerHTML") if user_picks.get(game.game_id, 'Not picked') != 'Not picked' else ""
-                ),
-                Td(
-                    f"{game.away_team} {game.away_team_score}", Br(),
-                    f"{game.home_team} {game.home_team_score}", Br(),
-                    Span(
-                        f"Winner: {game.home_team if game.home_team_score > game.away_team_score else game.away_team if game.away_team_score > game.home_team_score else 'Tie'}",
-                        style=f"color: {'green' if game.completed and user_picks.get(game.game_id) == (game.home_team if game.home_team_score > game.away_team_score else game.away_team) else 'red' if game.completed and game.game_id in user_picks else 'blue'}; font-weight: bold;"
-                    ) if game.completed else ""
-                ),
-                id=f"game-{game.game_id}"
-            ) for game in week_games],
-            style="width: 100%; border-collapse: collapse;",
-        )
-        week_tables.extend([week_header, Br(), table, Br()])  # Add line breaks between elements
+        table = create_week_table(week_games, user_picks, auth)
+        week_tables.extend([week_header, Br(), table, Br()])
 
     # Create sidebar
     sidebar = Div(
@@ -138,72 +127,191 @@ def home(auth, session):
 
     # Adjust main content to make room for sidebar
     main_content = Div(
-        top, 
+        H1("Once Pickem", style="text-align: center;"),  # Add the title here
+        Grid(
+            Div(H2(welcome_message)),
+            Div(login_or_user, style="text-align: right;"),
+            columns="1fr 1fr"
+        ),
         Br(),  # Add a line break after the top section
         *week_tables,
         cls="main-content"
     )
 
-    return Container(sidebar, main_content)
-
-@rt('/pick/{game_id:int}')
-def get(game_id: int, auth):
-    game = get_game(game_id)
-    if game is None:
-        return RedirectResponse('/', status_code=303)
-    
-    if to_est(datetime.fromisoformat(game['datetime'])) < get_current_est_time():
-        return Titled("Pick Not Allowed", P("Sorry, the game time has passed. You can no longer make a pick for this game."))
-    
-    frm = Form(
-        H3(f"{game['away_team']} @ {game['home_team']}"),
-        Select(Option(game['home_team'], value=game['home_team']),
-               Option(game['away_team'], value=game['away_team']),
-               id='pick', name='pick'),
-        Button("Submit Pick"),
-        action=f'/pick/{game_id}', method='post'
+    error_modal = Dialog(
+        Article(
+            Header(
+                P(Strong("Error"))
+            ),
+            P(id="error-modal-content"),
+            Footer(
+                Button("Close", cls="secondary", onclick="closeErrorModal()")
+            )
+        ),
+        id="error-modal"
     )
-    return Titled("Make Your Pick", frm)
 
-@rt('/pick/{game_id:int}')
-def post(game_id: int, pick: str, auth):
+    return Container(
+        sidebar,
+        main_content,
+        error_modal,
+        Div(id="dname-form"),  # Add this line to create a target for the display name form
+        Script(js_code)  # Add the JavaScript here
+    )
+
+@rt('/close-modal')
+def close_modal():
+    return Dialog(id="error-modal")
+
+def error_response(message, game_id, auth):
+    error_modal = Dialog(
+        Article(
+            Header(
+                P(Strong("Error"))
+            ),
+            P(message),
+            Footer(
+                Button("Close", cls="secondary", onclick="closeErrorModal()")
+            )
+        ),
+        id="error-modal",
+        open=True,
+        hx_swap_oob="true"
+    )
+    
+    # Get the original game row
+    game = get_game(game_id)
+    week = get_game_week(game['datetime'])
+    week_games = [g for g in get_all_games() if get_game_week(g.datetime) == week]
+    user_picks = get_user_picks(auth)
+    user_picks_dict = {p.game_id: p.pick for p in user_picks}
+    
+    # Create the updated week table
+    updated_table = create_week_table(week_games, user_picks_dict, auth)
+    
+    # Set the hx-swap-oob attribute on the table
+    updated_table.attrs['hx_swap_oob'] = "true"
+    
+    # Return both the error modal and the updated table
+    return error_modal, updated_table
+
+def create_week_table(games, user_picks, auth):
+    return Table(
+        Tr(
+            Th("Away Team", style="width: 20%;"),
+            Th("Home Team", style="width: 20%;"),
+            Th("Date/Time", style="width: 20%;"),
+            Th("Your Pick", style="width: 20%;"),
+            Th("Result", style="width: 20%;")
+        ),
+        *[create_game_row(game, user_picks.get(game.game_id, "Not picked"), auth) for game in games],
+        id=f"week-{get_game_week(games[0].datetime)}-table",
+        style="width: 100%; border-collapse: collapse;",
+    )
+
+def create_game_row(game, pick, auth):
+    game_time = to_est(datetime.fromisoformat(game.datetime))
+    current_time = get_current_est_time()
+    game_started = game_time < current_time
+
+    return Tr(
+        Td(
+            A(game.away_team, 
+              hx_post=f"/pick/{game.game_id}/{game.away_team}",
+              hx_target=f"#week-{get_game_week(game.datetime)}-table",
+              hx_swap="outerHTML",
+              **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
+            ) if not game_started else game.away_team
+        ),
+        Td(
+            A(game.home_team, 
+              hx_post=f"/pick/{game.game_id}/{game.home_team}",
+              hx_target=f"#week-{get_game_week(game.datetime)}-table",
+              hx_swap="outerHTML",
+              **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
+            ) if not game_started else game.home_team
+        ),
+        Td(format_est_time(game.datetime)),  # Use the new formatting function here
+        Td(
+            Span(pick) if pick != "Not picked" else "",
+            " ",
+            A("×", 
+              hx_post=f"/remove_pick/{game.game_id}",
+              hx_target=f"#week-{get_game_week(game.datetime)}-table",
+              hx_swap="outerHTML",
+              hx_indicator="#error-message"
+            ) if pick != "Not picked" and not game_started else "",
+            id=f"pick-{game.game_id}"
+        ),
+        Td(
+            (f"{game.away_team} {game.away_team_score}", Br(),
+            f"{game.home_team} {game.home_team_score}", Br(),
+            Span(
+                f"Winner: {game.home_team.split()[-1] if game.home_team_score > game.away_team_score else game.away_team.split()[-1] if game.away_team_score > game.home_team_score else 'Tie'}",
+                style=f"color: {'green' if game.completed and pick == (game.home_team if game.home_team_score > game.away_team_score else game.away_team) else 'red' if game.completed and pick != 'Not picked' else 'blue'}; font-weight: bold;"
+            )) if game.completed else ""
+        ),
+        id=f"game-{game.game_id}"
+    )
+
+@rt('/pick/{game_id:int}/{team}')
+def post(game_id: int, team: str, auth):
     game = get_game(game_id)
     if game is None:
-        return RedirectResponse('/', status_code=303)
+        return error_response("Game not found", game_id, auth)
     
     if to_est(datetime.fromisoformat(game['datetime'])) < get_current_est_time():
-        return Titled("Pick Not Allowed", P("Sorry, the game time has passed. You can no longer make a pick for this game."))
+        return error_response("Pick not allowed: The game time has passed.", game_id, auth)
     
     try:
-        add_pick(auth, game_id, pick)
-        return RedirectResponse('/', status_code=303)
+        user_picks = get_user_picks(auth)
+        week = get_game_week(game['datetime'])
+        week_games = [g for g in get_all_games() if get_game_week(g.datetime) == week]
+        week_picks = [p for p in user_picks if get_game_week(get_game(p.game_id)['datetime']) == week]
+        
+        # Check if the user has already picked this team
+        if any(p.pick == team for p in user_picks):
+            return error_response("Error: You have already picked this team this season.", game_id, auth)
+        
+        # Check if the user has already made 2 picks for this week
+        if len(week_picks) >= 2 and game_id not in [p.game_id for p in week_picks]:
+            return error_response("Error: You have already made 2 picks for this week.", game_id, auth)
+        
+        add_pick(auth, game_id, team)
+        
+        # Update user_picks after adding the new pick
+        user_picks = get_user_picks(auth)
+        user_picks_dict = {p.game_id: p.pick for p in user_picks}
+        
+        return create_week_table(week_games, user_picks_dict, auth)
     except ValueError as e:
-        return Titled("Pick Not Allowed", P(str(e)), A("Back to Picks", href="/"))
+        return error_response(str(e), game_id, auth)
 
 @rt('/remove_pick/{game_id:int}')
 def post(game_id: int, auth):
     try:
-        # Get the game information
         game = get_game(game_id)
         
-        # Check if the game has already started
         if to_est(datetime.fromisoformat(game['datetime'])) < get_current_est_time():
-            return "Baited Bitch, nice try: You cannot remove a pick after the game has started."
+            return error_response("You cannot remove a pick after the game has started.", game_id, auth)
         
-        # Remove the pick
         user_picks = get_user_picks(auth)
         for pick in user_picks:
             if pick.game_id == game_id:
                 db.t.picks.delete(pick.id)
                 break
         
-        return Li(f"{game['away_team']} @ {game['home_team']} - {game['datetime']}",
-                  A("Pick", href=f"/pick/{game['game_id']}"),
-                  " - Your pick: Not picked",
-                  id=f"game-{game['game_id']}")
+        week = get_game_week(game['datetime'])
+        week_games = [g for g in get_all_games() if get_game_week(g.datetime) == week]
+        
+        # Update user_picks after removing the pick
+        user_picks = get_user_picks(auth)
+        user_picks_dict = {p.game_id: p.pick for p in user_picks}
+        
+        return create_week_table(week_games, user_picks_dict, auth)
     except Exception as e:
-        return f"Error removing pick: {str(e)}"
-    
+        return error_response(str(e), game_id, auth)
+
 @rt('/leaderboard')
 def get(auth):
     user_scores = {}
@@ -212,23 +320,53 @@ def get(auth):
     all_picks = db.t.picks()
     for pick in all_picks:
         game = get_game(pick.game_id)
-        if game and game.get('completed', False):  # Use .get() method with a default value
+        if game and game.get('completed', False):
             user_scores[pick.user_id] = user_scores.get(pick.user_id, 0) + (1 if pick.correct else 0)
             user_total_picks[pick.user_id] = user_total_picks.get(pick.user_id, 0) + 1
             if pick.correct:
-                week = get_game_week(game['datetime'])  # Access datetime as a dictionary key
+                week = get_game_week(game['datetime'])
                 user_correct_picks.setdefault(pick.user_id, []).append(f"Week {week}: {game['away_team']} @ {game['home_team']} - Picked: {pick.pick}")
     
     # Fetch user names from the database
     user_names = {}
     for user in db.t.users():
-        user_names[user.user_id] = user.name if hasattr(user, 'name') else user.user_id
+        user_names[user.user_id] = user.dname or user.name or user.user_id
     
-    leaderboard = Ol(*[Li(f"{user_names.get(user_id, user_id)}: Score {score} ({user_total_picks.get(user_id, 0)} picks)", 
-                          Ul(*[Li(game) for game in user_correct_picks.get(user_id, [])])) 
-                       for user_id, score in sorted(user_scores.items(), key=lambda x: x[1], reverse=True)])
+    leaderboard = Ol(*[Li(
+        Span(f"{user_names.get(user_id, user_id)}: Score {score} ({user_total_picks.get(user_id, 0)} picks)"),
+        A("Change Display Name", hx_get=f"/change_dname/{user_id}", hx_target="#dname-form") if user_id == auth else "",
+        Ul(*[Li(game) for game in user_correct_picks.get(user_id, [])])
+    ) for user_id, score in sorted(user_scores.items(), key=lambda x: x[1], reverse=True)])
     
-    return Titled("Leaderboard", leaderboard, A("Back to Picks", href="/"))
+    dname_form = Div(id="dname-form")
+    
+    return Titled("Leaderboard", leaderboard, dname_form, A("Back to Picks", href="/"))
+
+@rt('/change_dname/{user_id}')
+def get(user_id: str, auth):
+    if user_id != auth:
+        return "Unauthorized"
+    
+    user_info = get_user_info(user_id)
+    if not user_info:
+        return "User not found"
+    
+    return Form(
+        Label("New Display Name:"),
+        Input(type="text", name="new_dname", value=user_info['dname'] or user_info['name'] or user_id),
+        Input(type="submit", value="Update"),
+        hx_post=f"/update_dname/{user_id}",
+        hx_target="#dname-form",
+        hx_swap="outerHTML"
+    )
+
+@rt('/update_dname/{user_id}')
+def post(user_id: str, new_dname: str, auth):
+    if user_id != auth:
+        return "Unauthorized"
+    
+    update_user_dname(user_id, new_dname)
+    return P("Display name updated successfully!")
 
 # Add the login route
 @rt('/login')
