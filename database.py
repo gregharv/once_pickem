@@ -20,7 +20,9 @@ class Pick:
     game_id: int
     pick: str
     timestamp: str
-    correct: bool = None  # Add this new field with a default value of None
+    correct: bool = None
+    pick_type: str = 'lock'  # 'lock' or 'upset'
+    points: float = 3.0  # Default to 3 points for lock picks
 
 # Create a Modal volume
 volume = modal.Volume.from_name("once-pickem-db", create_if_missing=True)
@@ -88,14 +90,17 @@ if picks not in db.t:
         game_id=int,
         pick=str,
         timestamp=str,
-        correct=bool  # Add this new column
+        correct=bool,
+        pick_type=str,
+        points=float
     ), pk='id')
 else:
-    # Check if the 'correct' column exists, if not, add it, needed for adding this after database was created
+    # Check if the new columns exist, if not, add them
     try:
-        db.execute('SELECT correct FROM picks LIMIT 1')
+        db.execute('SELECT pick_type, points FROM picks LIMIT 1')
     except Exception:
-        db.execute('ALTER TABLE picks ADD COLUMN correct BOOLEAN')
+        db.execute('ALTER TABLE picks ADD COLUMN pick_type TEXT DEFAULT "lock"')
+        db.execute('ALTER TABLE picks ADD COLUMN points FLOAT DEFAULT 3.0')
 
 # Users table (existing)
 users = db.t.users
@@ -153,24 +158,29 @@ def get_game_week(game_datetime):
     season_start = eastern.localize(datetime(game_date.year, 9, 4))  # Assuming season starts on September 4th
     return (game_date - season_start).days // 7 + 1
 
-def add_pick(user_id: str, game_id: int, pick: str):
+def add_pick(user_id: str, game_id: int, pick: str, pick_type: str = 'lock', points: float = 3.0):
     # Check if the game exists
     game = get_game(game_id)
     if not game:
         raise ValueError(f"Game with ID {game_id} does not exist")
 
-    # Check if the user has already picked this team
+    # Check if the user has already picked this team (only for lock picks)
     user_picks = get_user_picks(user_id)
-    if any(p.pick == pick for p in user_picks):
-        raise ValueError(f"You have already picked {pick} in a previous week")
+    if pick_type == 'lock' and any(p.pick == pick and p.pick_type == 'lock' for p in user_picks):
+        raise ValueError(f"You have already made a lock pick for {pick} in a previous week")
 
     # Get the game's week
     game_week = get_game_week(to_est(game['datetime']))
 
-    # Check if the user has already made 2 picks for this week
+    # Check if the user has already made 2 lock picks and 1 upset pick for this week
     week_picks = [p for p in user_picks if get_game_week(to_est(get_game(p.game_id)['datetime'])) == game_week]
-    if len(week_picks) >= 2:
-        raise ValueError(f"You have already made 2 picks for week {game_week}")
+    lock_picks = [p for p in week_picks if p.pick_type == 'lock']
+    upset_picks = [p for p in week_picks if p.pick_type == 'upset']
+
+    if pick_type == 'lock' and len(lock_picks) >= 2:
+        raise ValueError(f"You have already made 2 lock picks for week {game_week}")
+    elif pick_type == 'upset' and len(upset_picks) >= 1:
+        raise ValueError(f"You have already made an upset pick for week {game_week}")
 
     # Remove any existing pick for this user and game
     user_id = str(user_id)
@@ -185,11 +195,14 @@ def add_pick(user_id: str, game_id: int, pick: str):
         "game_id": game_id,
         "pick": pick,
         "timestamp": datetime.now().isoformat(),
-        "correct": None  # Initialize as None
+        "correct": None,  # Initialize as None
+        "pick_type": pick_type,
+        "points": points
     })
     print(f"New pick: {new_pick}")
     return Pick(id=new_pick.id, user_id=new_pick.user_id, game_id=new_pick.game_id, 
-                pick=new_pick.pick, timestamp=new_pick.timestamp, correct=new_pick.correct)
+                pick=new_pick.pick, timestamp=new_pick.timestamp, correct=new_pick.correct, 
+                pick_type=new_pick.pick_type, points=new_pick.points)
 
 # Helper function to get the week number of a game
 def get_all_games():
@@ -259,20 +272,20 @@ def update_pick_correctness(game_result):
     
     logger.info(f"Updating pick correctness for game {game_id}: {game['home_team']} {home_score} - {game['away_team']} {away_score}")
     
-    # Only determine winner if both scores are available and the game is completed
     if game['completed'] and home_score is not None and away_score is not None:
         winner = game['home_team'] if home_score > away_score else game['away_team'] if away_score > home_score else None
         
         for pick in game_picks:
             correct = pick['pick'] == winner if winner else None
-            logger.info(f"Updating pick {pick['id']} for user {pick['user_id']}: picked {pick['pick']}, correct: {correct}")
             picks.upsert({
                 "id": pick['id'],
                 "user_id": pick['user_id'],
                 "game_id": pick['game_id'],
                 "pick": pick['pick'],
                 "timestamp": pick['timestamp'],
-                "correct": correct
+                "correct": correct,
+                "pick_type": pick['pick_type'],
+                "points": pick['points']
             }, pk='id')
     else:
         logger.info(f"Game {game_id} is not completed or scores are not available. Skipping pick correctness update.")
@@ -294,3 +307,60 @@ def get_user_info(user_id: str):
             'dname': user['dname']
         }
     return None
+
+# Add this new table definition after the other table definitions
+spreads = db.t.spreads
+if spreads not in db.t:
+    spreads.create(dict(
+        id=int,
+        game_id=int,
+        bookmaker=str,
+        team=str,
+        point=float,
+        price=int,
+        timestamp=str
+    ), pk='id')
+
+# Add this new function at the end of the file
+def update_spreads_in_database(spreads_df):
+    est = pytz.timezone('US/Eastern')
+    current_time = datetime.now(est).isoformat()
+
+    for _, row in spreads_df.iterrows():
+        spread_data = {
+            'game_id': row['game_id'],
+            'bookmaker': row['bookmaker'],
+            'team': row['team'],
+            'point': row['point'],
+            'price': row['price'],
+            'timestamp': current_time
+        }
+        spreads.insert(spread_data)
+
+    logger.info(f"Updated {len(spreads_df)} spread records in the database.")
+
+# Add this new function to retrieve spreads for a specific game
+def get_game_spreads(game_id: int):
+    return [dict(s) for s in spreads.rows_where("game_id = ?", [game_id])]
+
+# Add a new function to calculate user scores
+def calculate_user_score(user_id: str):
+    user_picks = get_user_picks(user_id)
+    total_score = 0
+    for pick in user_picks:
+        if pick.correct:
+            total_score += pick.points
+    return total_score
+
+# Add this new function to get leaderboard data
+def get_leaderboard():
+    users_list = users.rows
+    leaderboard = []
+    for user in users_list:
+        score = calculate_user_score(user['user_id'])
+        leaderboard.append({
+            'user_id': user['user_id'],
+            'name': user['dname'] or user['name'],
+            'score': score
+        })
+    return sorted(leaderboard, key=lambda x: x['score'], reverse=True)

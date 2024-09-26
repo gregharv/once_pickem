@@ -1,6 +1,6 @@
 from fasthtml.common import *
 from auth import bware, login, logout, auth_redirect, set_github_secret, get_github_client
-from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, update_user_dname, get_user_info
+from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, update_user_dname, get_user_info, get_game_spreads, calculate_user_score, get_leaderboard
 from datetime import datetime, timedelta
 from itertools import groupby
 import modal
@@ -138,6 +138,11 @@ def get_current_week():
             return get_game_week(game.datetime)
     return 18  # Return the last week if all games have passed
 
+# Add this new function near the other helper functions
+def get_games_for_week(week):
+    all_games = get_all_games()
+    return [game for game in all_games if get_game_week(game.datetime) == week]
+
 # Homepage (only visible if logged in)
 @rt('/')
 def home(auth, session):
@@ -162,8 +167,8 @@ def home(auth, session):
     # Group games by week
     grouped_games = groupby(sorted_games, key=lambda g: get_game_week(g.datetime))
 
-    # Get user's picks, defaulting to an empty dictionary if there are none
-    user_picks = {p.game_id: p.pick for p in get_user_picks(auth) or []}
+    # Get user's picks, and create a dictionary with game_id as key and Pick object as value
+    user_picks = {p.game_id: p for p in get_user_picks(auth) or []}
 
     # Create sidebar with leaderboard link and links to each week
     sidebar = Div(
@@ -177,7 +182,7 @@ def home(auth, session):
     for week, week_games in grouped_games:
         week_games = list(week_games)
         user_week_picks = sum(1 for game in week_games if game.game_id in user_picks)
-        week_header = H2(f"Week {week} - {user_week_picks}/2 picks made", id=f"week-{week}")
+        week_header = H2(f"Week {week} - {user_week_picks}/3 picks made", id=f"week-{week}")
         
         table = create_week_table(week_games, user_picks, auth)
         week_tables.extend([week_header, Br(), table, Br()])
@@ -241,7 +246,7 @@ def error_response(message, game_id, auth):
     week = get_game_week(game['datetime'])
     week_games = [g for g in get_all_games() if get_game_week(g.datetime) == week]
     user_picks = get_user_picks(auth)
-    user_picks_dict = {p.game_id: p.pick for p in user_picks}
+    user_picks_dict = {p.game_id: p for p in user_picks}
     
     # Create the updated week table
     updated_table = create_week_table(week_games, user_picks_dict, auth)
@@ -253,20 +258,16 @@ def error_response(message, game_id, auth):
     return error_modal, updated_table
 
 def create_week_table(games, user_picks, auth):
-    return Div(
-        Table(
-            Tr(
-                Th("Away Team", style="width: 20%;"),
-                Th("Home Team", style="width: 20%;"),
-                Th("Date/Time", style="width: 20%;"),
-                Th("Your Pick", style="width: 20%;"),
-                Th("Result", style="width: 20%;")
-            ),
-            *[create_game_row(game, user_picks.get(game.game_id, "Not picked"), auth) for game in games],
-            id=f"week-{get_game_week(games[0].datetime)}-table",
-            style="width: 100%; border-collapse: collapse;",
+    return Table(
+        Tr(
+            Th("Away Team"),
+            Th("Home Team"),
+            Th("Date/Time"),
+            Th("Your Pick"),
+            Th("Result")
         ),
-        cls="table-container"
+        *[create_game_row(game, user_picks.get(game.game_id), auth) for game in games],
+        id=f"week-{get_game_week(games[0].datetime)}-table"
     )
 
 def create_game_row(game, pick, auth):
@@ -279,103 +280,112 @@ def create_game_row(game, pick, auth):
     away_team_short = TEAM_ABBREVIATIONS.get(away_team_full, away_team_full)
     home_team_short = TEAM_ABBREVIATIONS.get(home_team_full, home_team_full)
 
-    # Format the date for both full and short versions
     full_date = format_est_time(game.datetime)
-    short_date = game_time.strftime("%a")  # This will give us the abbreviated day of the week
+    short_date = game_time.strftime("%a")
 
-    # Get the short name for the picked team
-    pick_short = TEAM_ABBREVIATIONS.get(pick, pick) if pick != "Not picked" else ""
+    pick_short = TEAM_ABBREVIATIONS.get(pick.pick, pick.pick) if pick else ""
+
+    # Get the spreads for this game
+    spreads = get_game_spreads(game.game_id)
+    
+    # Find the most recent spread for each team
+    away_spread = None
+    home_spread = None
+    for spread in sorted(spreads, key=lambda s: s['timestamp'], reverse=True):
+        if spread['team'] == away_team_full and away_spread is None:
+            away_spread = spread
+        elif spread['team'] == home_team_full and home_spread is None:
+            home_spread = spread
+        if away_spread and home_spread:
+            break
+
+    def create_team_cell(team_full, team_short, spread):
+        team_element = A(
+            Span(team_full, cls="team-name-full"),
+            Span(team_short, cls="team-name-short"),
+            hx_post=f"/pick/{game.game_id}/{team_full}/lock",
+            hx_target=f"#week-{get_game_week(game.datetime)}-table",
+            hx_swap="outerHTML",
+            cls="team-pick"
+        ) if not game_started else Span(
+            Span(team_full, cls="team-name-full"),
+            Span(team_short, cls="team-name-short")
+        )
+
+        spread_element = ""
+        if spread and spread['point'] > 0:
+            spread_element = A(
+                f" (+{spread['point']})",
+                hx_post=f"/pick/{game.game_id}/{team_full}/upset/{spread['point']}",
+                hx_target=f"#week-{get_game_week(game.datetime)}-table",
+                hx_swap="outerHTML",
+                cls="upset-pick"
+            ) if not game_started else f" (+{spread['point']})"
+
+        return Td(team_element, spread_element)
 
     return Tr(
-        Td(
-            A(
-                Span(away_team_full, cls="team-name-full"),
-                Span(away_team_short, cls="team-name-short"),
-                hx_post=f"/pick/{game.game_id}/{game.away_team}",
-                hx_target=f"#week-{get_game_week(game.datetime)}-table",
-                hx_swap="outerHTML",
-                **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
-            ) if not game_started else Span(
-                Span(away_team_full, cls="team-name-full"),
-                Span(away_team_short, cls="team-name-short")
-            )
-        ),
-        Td(
-            A(
-                Span(home_team_full, cls="team-name-full"),
-                Span(home_team_short, cls="team-name-short"),
-                hx_post=f"/pick/{game.game_id}/{game.home_team}",
-                hx_target=f"#week-{get_game_week(game.datetime)}-table",
-                hx_swap="outerHTML",
-                **{"hx-on::after-request": "if(event.detail.failed) document.getElementById('error-modal').setAttribute('open', 'true');"}
-            ) if not game_started else Span(
-                Span(home_team_full, cls="team-name-full"),
-                Span(home_team_short, cls="team-name-short")
-            )
-        ),
+        create_team_cell(away_team_full, away_team_short, away_spread),
+        create_team_cell(home_team_full, home_team_short, home_spread),
         Td(
             Span(full_date, cls="date-full"),
             Span(short_date, cls="date-short")
         ),
         Td(
             Span(
-                Span(pick, cls="team-name-full"),
+                Span(pick.pick, cls="team-name-full"),
                 Span(pick_short, cls="team-name-short")
-            ) if pick != "Not picked" else "",
+            ) if pick else "",
+            " ",
+            Span("(Lock)", cls="pick-type") if pick and pick.pick_type == 'lock' else "",
+            Span("(Upset)", cls="pick-type") if pick and pick.pick_type == 'upset' else "",
             " ",
             A("×", 
               hx_post=f"/remove_pick/{game.game_id}",
               hx_target=f"#week-{get_game_week(game.datetime)}-table",
               hx_swap="outerHTML",
               hx_indicator="#error-message"
-            ) if pick != "Not picked" and not game_started else "",
+            ) if pick and not game_started else "",
             id=f"pick-{game.game_id}"
         ),
         Td(
             (Span(
                 f"{away_team_short} {game.away_team_score}",
                 style=f"font-weight: {'bold' if game.away_team_score > game.home_team_score else 'normal'}; "
-                      f"color: {'green' if game.completed and pick == game.away_team and game.away_team_score > game.home_team_score else 'red' if game.completed and pick == game.away_team and game.away_team_score < game.home_team_score else 'inherit'};"
+                      f"color: {'green' if game.completed and pick and pick.pick == game.away_team and game.away_team_score > game.home_team_score else 'red' if game.completed and pick and pick.pick == game.away_team and game.away_team_score < game.home_team_score else 'inherit'};"
             ),
             " - ",
             Span(
                 f"{home_team_short} {game.home_team_score}",
                 style=f"font-weight: {'bold' if game.home_team_score > game.away_team_score else 'normal'}; "
-                      f"color: {'green' if game.completed and pick == game.home_team and game.home_team_score > game.away_team_score else 'red' if game.completed and pick == game.home_team and game.home_team_score < game.away_team_score else 'inherit'};"
+                      f"color: {'green' if game.completed and pick and pick.pick == game.home_team and game.home_team_score > game.away_team_score else 'red' if game.completed and pick and pick.pick == game.home_team and game.home_team_score < game.away_team_score else 'inherit'};"
             )) if game.completed else ""
         ),
         id=f"game-{game.game_id}"
     )
 
-@rt('/pick/{game_id:int}/{team}')
+@rt('/pick/{game_id:int}/{team}/lock')
 def post(game_id: int, team: str, auth):
-    game = get_game(game_id)
-    if game is None:
-        return error_response("Game not found", game_id, auth)
-    
-    if to_est(datetime.fromisoformat(game['datetime'])) < get_current_est_time():
-        return error_response("Pick not allowed: The game time has passed.", game_id, auth)
-    
     try:
-        user_picks = get_user_picks(auth)
+        add_pick(auth, game_id, team, pick_type='lock', points=3.0)
+        game = get_game(game_id)
         week = get_game_week(game['datetime'])
-        week_games = [g for g in get_all_games() if get_game_week(g.datetime) == week]
-        week_picks = [p for p in user_picks if get_game_week(get_game(p.game_id)['datetime']) == week]
-        
-        # Check if the user has already picked this team
-        if any(p.pick == team for p in user_picks):
-            return error_response("Error: You have already picked this team this season.", game_id, auth)
-        
-        # Check if the user has already made 2 picks for this week
-        if len(week_picks) >= 2 and game_id not in [p.game_id for p in week_picks]:
-            return error_response("Error: You have already made 2 picks for this week.", game_id, auth)
-        
-        add_pick(auth, game_id, team)
-        
-        # Update user_picks after adding the new pick
+        week_games = get_games_for_week(week)
         user_picks = get_user_picks(auth)
-        user_picks_dict = {p.game_id: p.pick for p in user_picks}
-        
+        user_picks_dict = {p.game_id: p for p in user_picks}
+        return create_week_table(week_games, user_picks_dict, auth)
+    except ValueError as e:
+        return error_response(str(e), game_id, auth)
+
+@rt('/pick/{game_id:int}/{team}/upset/{points:float}')
+def post(game_id: int, team: str, points: float, auth):
+    try:
+        add_pick(auth, game_id, team, pick_type='upset', points=points)
+        game = get_game(game_id)
+        week = get_game_week(game['datetime'])
+        week_games = get_games_for_week(week)
+        user_picks = get_user_picks(auth)
+        user_picks_dict = {p.game_id: p for p in user_picks}
         return create_week_table(week_games, user_picks_dict, auth)
     except ValueError as e:
         return error_response(str(e), game_id, auth)
@@ -399,7 +409,7 @@ def post(game_id: int, auth):
         
         # Update user_picks after removing the pick
         user_picks = get_user_picks(auth)
-        user_picks_dict = {p.game_id: p.pick for p in user_picks}
+        user_picks_dict = {p.game_id: p for p in user_picks}
         
         return create_week_table(week_games, user_picks_dict, auth)
     except Exception as e:
@@ -407,50 +417,34 @@ def post(game_id: int, auth):
 
 @rt('/leaderboard')
 def get(auth):
-    user_scores = {}
-    user_correct_picks = {}
-    user_total_picks = {}
-    all_picks = db.t.picks()
-    for pick in all_picks:
-        game = get_game(pick.game_id)
-        if game and game.get('completed', False):
-            user_scores[pick.user_id] = user_scores.get(pick.user_id, 0) + (1 if pick.correct else 0)
-            user_total_picks[pick.user_id] = user_total_picks.get(pick.user_id, 0) + 1
-            if pick.correct:
-                week = get_game_week(game['datetime'])
-                user_correct_picks.setdefault(pick.user_id, []).append(f"Week {week}: {game['away_team']} @ {game['home_team']} - Picked: {pick.pick}")
+    leaderboard_data = get_leaderboard()
     
-    # Fetch user names from the database
-    user_names = {}
-    for user in db.t.users():
-        user_names[user.user_id] = user.dname or user.name or user.user_id
-    
-    leaderboard = Ol(*[Li(
-        Span(f"{user_names.get(user_id, user_id)}: Score {score} ({user_total_picks.get(user_id, 0)} picks)"),
-        A("Change Display Name", hx_get=f"/change_dname/{user_id}", hx_target="#dname-form") if user_id == auth else "",
-        Ul(*[Li(game) for game in user_correct_picks.get(user_id, [])])
-    ) for user_id, score in sorted(user_scores.items(), key=lambda x: x[1], reverse=True)])
-    
-    dname_form = Div(id="dname-form")
-    
-    # Create sidebar with updated 'Back to Picks' link
+    # Get the current week
     current_week = get_current_week()
+    
+    # Create the sidebar
     sidebar = Div(
-        A("Back to Picks", href=f"/#week-{current_week}"),
+        A("Picks", href=f"/#week-{current_week}"),
         H3("Weeks"),
-        *[A(f"Week {week}", href=f"/#week-{week}") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
+        *[A(f"Week {week}", href=f"#week-{week}") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
         cls="sidebar"
     )
 
-    # Adjust main content to make room for sidebar
+    # Create the leaderboard table
+    leaderboard_table = Table(
+        Tr(Th("Rank"), Th("Name"), Th("Score")),
+        *[Tr(Td(i+1), Td(entry['name']), Td(entry['score'])) for i, entry in enumerate(leaderboard_data)]
+    )
+
+    # Create the main content
     main_content = Div(
-        leaderboard,
-        dname_form,
+        H1("Leaderboard"),
+        leaderboard_table,
         cls="main-content"
     )
 
     return Titled(
-        "Leaderboard",
+        "Leaderboard - Once Pickem",
         sidebar,
         main_content
     )
@@ -488,8 +482,11 @@ def get():
         H2("Welcome to Once Pickem!"),
         P("Here are the rules of the game:"),
         Ul(
-            Li("You can pick 2 teams per week."),
-            Li("You can't pick the same team twice throughout the year."),
+            Li("You can pick 3 teams per week, 2 lock picks and 1 upset pick."),
+            Li("You can't pick the same team twice throughout the year for the lock picks."),
+            Li("You can pick the same team for the upset pick if you want to."),
+            Li("You get 3 points for picking a lock winner correctly."),
+            Li("You get the spread amount of points for picking an upset correctly."),
             Li("Make your picks before the game starts."),
             Li("You cannot change your picks once the game have started."),
             Li("Need help? Watch our ", A("video tutorial", href="https://www.youtube.com/watch?v=cvh0nX08nRw"))
