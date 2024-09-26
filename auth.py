@@ -62,7 +62,7 @@ def login(extra_content=None):
     client = get_github_client()
     login_url = client.login_link(redirect_uri=f"{base_url}/auth_redirect")
     login_button = A("Login with GitHub", href=login_url, cls="button")
-    content = [H1("Login"), login_button]
+    content = ["Login", login_button]
     if extra_content:
         content.insert(1, extra_content)  # Insert extra_content after the H1 but before the login button
     return Titled(*content)

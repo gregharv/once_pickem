@@ -118,9 +118,9 @@ def home(auth, session):
     games = get_all_games()
     try:
         user = db.t.users.get(auth)
-        user_name = user.dname or user.name or auth  # Use dname if available, then name, then auth
+        user_name = user.dname or user.name or auth
     except:
-        user_name = auth  # Fallback to using auth (user_id) if user not found in database
+        user_name = auth
     
     welcome_message = f"Welcome, {user_name}"
     login_or_user = Grid(
@@ -163,7 +163,6 @@ def home(auth, session):
 
     # Adjust main content to make room for sidebar
     main_content = Div(
-        H1("Once Pickem", style="text-align: center;"),  # Add the title here
         Grid(
             Div(H2(welcome_message)),
             Div(login_or_user, style="text-align: right;"),
@@ -187,12 +186,13 @@ def home(auth, session):
         id="error-modal"
     )
 
-    return Container(
+    return Titled(
+        "Once Pickem",
         sidebar,
         main_content,
         error_modal,
-        Div(id="dname-form"),  # Add this line to create a target for the display name form
-        Script(js_code)  # Add the JavaScript here
+        Div(id="dname-form"),
+        Script(js_code)
     )
 
 @rt('/close-modal')
@@ -407,7 +407,27 @@ def get(auth):
     
     dname_form = Div(id="dname-form")
     
-    return Titled("Leaderboard", leaderboard, dname_form, A("Back to Picks", href="/"))
+    # Create sidebar
+    sidebar = Div(
+        A("Back to Picks", href="/"),
+        H3("Weeks"),
+        *[A(f"Week {week}", href=f"/#week-{week}") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
+        cls="sidebar"
+    )
+
+    # Adjust main content to make room for sidebar
+    main_content = Div(
+        H2("Leaderboard"),
+        leaderboard,
+        dname_form,
+        cls="main-content"
+    )
+
+    return Titled(
+        "Leaderboard",
+        sidebar,
+        main_content
+    )
 
 @rt('/change_dname/{user_id}')
 def get(user_id: str, auth):
@@ -480,6 +500,7 @@ else:  # create a modal app, which can be imported in another file or used with 
              .copy_local_dir("assets", "/app/assets"))  # Add this line
 
     @modal_app.function(
+        container_idle_timeout=300,
         image=image,
         allow_concurrent_inputs=1000,  # async functions can handle multiple inputs
         volumes={"/data": volume},  # Mount the volume to /data
