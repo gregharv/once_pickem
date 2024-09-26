@@ -99,8 +99,25 @@ def get_game_week(game_datetime):
     else:
         game_date = game_date.astimezone(eastern)
     
-    season_start = eastern.localize(datetime(game_date.year, 9, 4))  # Assuming season starts on September 4th
-    return (game_date - season_start).days // 7 + 1
+    # Determine the year of the season based on the game date
+    if game_date.month < 3:  # If the game is in January or February, it's part of the previous year's season
+        season_year = game_date.year - 1
+    else:
+        season_year = game_date.year
+
+    # Set the season start to the first Thursday of September
+    season_start = eastern.localize(datetime(season_year, 9, 1))
+    while season_start.weekday() != 3:  # 3 represents Thursday
+        season_start += timedelta(days=1)
+
+    # Calculate the week number
+    week = (game_date - season_start).days // 7 + 1
+
+    # Handle the case for week 18 (which occurs in the next calendar year)
+    if week <= 0:
+        week = 18
+
+    return week
 
 # Helper function to convert a datetime to EST and format it nicely
 def format_est_time(dt):
@@ -111,6 +128,15 @@ def format_est_time(dt):
         dt = pytz.utc.localize(dt)
     est_time = dt.astimezone(eastern)
     return est_time.strftime("%a, %b %d, %Y at %I:%M %p")
+
+# Add this function near the other helper functions
+def get_current_week():
+    current_time = get_current_est_time()
+    games = get_all_games()
+    for game in sorted(games, key=lambda g: to_est(g.datetime)):
+        if to_est(game.datetime) > current_time:
+            return get_game_week(game.datetime)
+    return 18  # Return the last week if all games have passed
 
 # Homepage (only visible if logged in)
 @rt('/')
@@ -140,26 +166,21 @@ def home(auth, session):
     user_picks = {p.game_id: p.pick for p in get_user_picks(auth) or []}
 
     # Create sidebar with leaderboard link and links to each week
-    sidebar_links = [
+    sidebar = Div(
         A("Leaderboard", href="/leaderboard"),
-        Br(),  # Add a line break
-        H3("Weeks")
-    ]
+        H3("Weeks"),
+        *[A(f"Week {week}", href=f"#week-{week}") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
+        cls="sidebar"
+    )
+
     week_tables = []
     for week, week_games in grouped_games:
         week_games = list(week_games)
         user_week_picks = sum(1 for game in week_games if game.game_id in user_picks)
         week_header = H2(f"Week {week} - {user_week_picks}/2 picks made", id=f"week-{week}")
-        sidebar_links.append(A(f"Week {week}", href=f"#week-{week}"))
         
         table = create_week_table(week_games, user_picks, auth)
         week_tables.extend([week_header, Br(), table, Br()])
-
-    # Create sidebar
-    sidebar = Div(
-        *sidebar_links,
-        cls="sidebar"
-    )
 
     # Adjust main content to make room for sidebar
     main_content = Div(
@@ -311,11 +332,16 @@ def create_game_row(game, pick, auth):
             id=f"pick-{game.game_id}"
         ),
         Td(
-            (f"{away_team_short} {game.away_team_score}", Br(),
-            f"{home_team_short} {game.home_team_score}", Br(),
+            (Span(
+                f"{away_team_short} {game.away_team_score}",
+                style=f"font-weight: {'bold' if game.away_team_score > game.home_team_score else 'normal'}; "
+                      f"color: {'green' if game.completed and pick == game.away_team and game.away_team_score > game.home_team_score else 'red' if game.completed and pick == game.away_team and game.away_team_score < game.home_team_score else 'inherit'};"
+            ),
+            " - ",
             Span(
-                f"Winner: {home_team_short if game.home_team_score > game.away_team_score else away_team_short if game.away_team_score > game.home_team_score else 'Tie'}",
-                style=f"color: {'green' if game.completed and pick == (game.home_team if game.home_team_score > game.away_team_score else game.away_team) else 'red' if game.completed and pick != 'Not picked' else 'blue'}; font-weight: bold;"
+                f"{home_team_short} {game.home_team_score}",
+                style=f"font-weight: {'bold' if game.home_team_score > game.away_team_score else 'normal'}; "
+                      f"color: {'green' if game.completed and pick == game.home_team and game.home_team_score > game.away_team_score else 'red' if game.completed and pick == game.home_team and game.home_team_score < game.away_team_score else 'inherit'};"
             )) if game.completed else ""
         ),
         id=f"game-{game.game_id}"
@@ -407,9 +433,10 @@ def get(auth):
     
     dname_form = Div(id="dname-form")
     
-    # Create sidebar
+    # Create sidebar with updated 'Back to Picks' link
+    current_week = get_current_week()
     sidebar = Div(
-        A("Back to Picks", href="/"),
+        A("Back to Picks", href=f"/#week-{current_week}"),
         H3("Weeks"),
         *[A(f"Week {week}", href=f"/#week-{week}") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
         cls="sidebar"
@@ -417,7 +444,6 @@ def get(auth):
 
     # Adjust main content to make room for sidebar
     main_content = Div(
-        H2("Leaderboard"),
         leaderboard,
         dname_form,
         cls="main-content"
@@ -477,10 +503,14 @@ def get():
 def get(session):
     return logout(session)
 
-# Add the auth_redirect route
+# Modify the auth_redirect function
 @rt('/auth_redirect')
 def get(code: str, session, state: str = None):
-    return auth_redirect(code, session, state)
+    auth_result = auth_redirect(code, session, state)
+    if isinstance(auth_result, RedirectResponse):
+        current_week = get_current_week()
+        return RedirectResponse(url=f"/#week-{current_week}", status_code=302)
+    return auth_result
 
 if __name__ == "__main__":  # if invoked with `python`, run locally
     serve()
