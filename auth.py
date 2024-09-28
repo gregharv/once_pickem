@@ -80,12 +80,14 @@ def auth_redirect(code:str, session, state:str=None):
         info = client.retr_info(code, redirect_uri=f"{base_url}/auth_redirect")
         user_id = info[client.id_key]
         user_name = info.get('name', user_id)  # Get the user's name, fallback to user_id if not available
+        username = info.get('login')  # Get the GitHub username
         token = client.token["access_token"]
         session['user_id'] = user_id
         session['user_name'] = user_name  # Store the user's name in the session
+        session['username'] = username  # Store the GitHub username in the session
         
         # Always update or insert user information
-        db.t.users.upsert(dict(user_id=user_id, name=user_name), pk='user_id')
+        db.t.users.upsert(dict(user_id=user_id, name=user_name, username=username), pk='user_id')
         
         return RedirectResponse('/', status_code=303)
     except Exception as e:

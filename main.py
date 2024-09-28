@@ -1,6 +1,6 @@
 from fasthtml.common import *
 from auth import bware, login, logout, auth_redirect, set_github_secret, get_github_client
-from database import db, Schedule, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, update_user_dname, get_user_info, get_game_spreads, calculate_user_score, get_leaderboard
+from database import db, ScheduleGame, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, update_user_dname, get_user_info, get_game_spreads, calculate_user_score, get_leaderboard, get_user_info_by_username, get_user_lock_picks
 from datetime import datetime, timedelta
 from itertools import groupby
 import modal
@@ -13,43 +13,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 import modal
 
-# Add this near the top of your file, after the imports
-TEAM_ABBREVIATIONS = {
-    "Arizona Cardinals": "ARI",
-    "Atlanta Falcons": "ATL",
-    "Baltimore Ravens": "BAL",
-    "Buffalo Bills": "BUF",
-    "Carolina Panthers": "CAR",
-    "Chicago Bears": "CHI",
-    "Cincinnati Bengals": "CIN",
-    "Cleveland Browns": "CLE",
-    "Dallas Cowboys": "DAL",
-    "Denver Broncos": "DEN",
-    "Detroit Lions": "DET",
-    "Green Bay Packers": "GB",
-    "Houston Texans": "HOU",
-    "Indianapolis Colts": "IND",
-    "Jacksonville Jaguars": "JAX",
-    "Kansas City Chiefs": "KC",
-    "Las Vegas Raiders": "LV",
-    "Los Angeles Chargers": "LAC",
-    "Los Angeles Rams": "LAR",
-    "Miami Dolphins": "MIA",
-    "Minnesota Vikings": "MIN",
-    "New England Patriots": "NE",
-    "New Orleans Saints": "NO",
-    "New York Giants": "NYG",
-    "New York Jets": "NYJ",
-    "Philadelphia Eagles": "PHI",
-    "Pittsburgh Steelers": "PIT",
-    "San Francisco 49ers": "SF",
-    "Seattle Seahawks": "SEA",
-    "Tampa Bay Buccaneers": "TB",
-    "Tennessee Titans": "TEN",
-    "Washington Commanders": "WAS"
-}
 
-# Define your JavaScript code
 js_code = """
 document.body.addEventListener('htmx:afterOnLoad', function(event) {
     if (event.detail.elt.id === 'error-modal' && event.detail.xhr.status !== 200) {
@@ -89,6 +53,16 @@ def to_est(dt):
         return eastern.localize(dt)
     else:
         return dt.astimezone(eastern)
+    
+# Helper function to convert a datetime to EST and format it nicely
+def format_est_time(dt):
+    eastern = pytz.timezone('US/Eastern')
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
+    if dt.tzinfo is None:
+        dt = pytz.utc.localize(dt)
+    est_time = dt.astimezone(eastern)
+    return est_time.strftime("%a, %b %d, %Y at %I:%M %p")
 
 # Helper function to get the week number of a game
 def get_game_week(game_datetime):
@@ -118,16 +92,6 @@ def get_game_week(game_datetime):
         week = 18
 
     return week
-
-# Helper function to convert a datetime to EST and format it nicely
-def format_est_time(dt):
-    eastern = pytz.timezone('US/Eastern')
-    if isinstance(dt, str):
-        dt = datetime.fromisoformat(dt)
-    if dt.tzinfo is None:
-        dt = pytz.utc.localize(dt)
-    est_time = dt.astimezone(eastern)
-    return est_time.strftime("%a, %b %d, %Y at %I:%M %p")
 
 # Add this function near the other helper functions
 def get_current_week():
@@ -277,13 +241,13 @@ def create_game_row(game, pick, auth):
 
     away_team_full = game.away_team
     home_team_full = game.home_team
-    away_team_short = TEAM_ABBREVIATIONS.get(away_team_full, away_team_full)
-    home_team_short = TEAM_ABBREVIATIONS.get(home_team_full, home_team_full)
+    away_team_short = game.away_team_short
+    home_team_short = game.home_team_short
 
     full_date = format_est_time(game.datetime)
     short_date = game_time.strftime("%a")
 
-    pick_short = TEAM_ABBREVIATIONS.get(pick.pick, pick.pick) if pick else ""
+    pick_short = get_game(pick.game_id)['away_team_short'] if pick and pick.pick == away_team_full else get_game(pick.game_id)['home_team_short'] if pick else ""
 
     # Get the spreads for this game
     spreads = get_game_spreads(game.game_id)
@@ -299,17 +263,21 @@ def create_game_row(game, pick, auth):
         if away_spread and home_spread:
             break
 
-    def create_team_cell(team_full, team_short, spread):
+    # Get all lock picks for the user
+    user_lock_picks = get_user_lock_picks(auth)
+
+    def create_team_cell(team_full, team_short, spread, is_lock_pick):
+        team_style = "color: purple;" if is_lock_pick else ""
         team_element = A(
-            Span(team_full, cls="team-name-full"),
-            Span(team_short, cls="team-name-short"),
+            Span(team_full, cls="team-name-full", style=team_style),
+            Span(team_short, cls="team-name-short", style=team_style),
             hx_post=f"/pick/{game.game_id}/{team_full}/lock",
             hx_target=f"#week-{get_game_week(game.datetime)}-table",
             hx_swap="outerHTML",
             cls="team-pick"
         ) if not game_started else Span(
-            Span(team_full, cls="team-name-full"),
-            Span(team_short, cls="team-name-short")
+            Span(team_full, cls="team-name-full", style=team_style),
+            Span(team_short, cls="team-name-short", style=team_style)
         )
 
         spread_element = ""
@@ -325,8 +293,8 @@ def create_game_row(game, pick, auth):
         return Td(team_element, spread_element)
 
     return Tr(
-        create_team_cell(away_team_full, away_team_short, away_spread),
-        create_team_cell(home_team_full, home_team_short, home_spread),
+        create_team_cell(away_team_full, away_team_short, away_spread, away_team_full in user_lock_picks),
+        create_team_cell(home_team_full, home_team_short, home_spread, home_team_full in user_lock_picks),
         Td(
             Span(full_date, cls="date-full"),
             Span(short_date, cls="date-short")
@@ -433,7 +401,11 @@ def get(auth):
     # Create the leaderboard table
     leaderboard_table = Table(
         Tr(Th("Rank"), Th("Name"), Th("Score")),
-        *[Tr(Td(i+1), Td(entry['name']), Td(entry['score'])) for i, entry in enumerate(leaderboard_data)]
+        *[Tr(
+            Td(i+1), 
+            Td(A(entry['name'], href=f"/user/{entry['username']}")),  # Use username here
+            Td(entry['score'])
+        ) for i, entry in enumerate(leaderboard_data)]
     )
 
     # Create the main content
@@ -445,6 +417,65 @@ def get(auth):
 
     return Titled(
         "Leaderboard - Once Pickem",
+        sidebar,
+        main_content
+    )
+
+# Add this new route for the user page
+@rt('/user/{username}')
+def get(username: str, auth):
+    user_info = get_user_info_by_username(username)
+    if not user_info:
+        return "User not found"
+    
+    user_picks = get_user_picks(user_info['user_id'])
+    user_score = calculate_user_score(user_info['user_id'])
+    
+    # Group picks by week
+    picks_by_week = {}
+    for pick in user_picks:
+        game = get_game(pick.game_id)
+        week = get_game_week(game['datetime'])
+        if week not in picks_by_week:
+            picks_by_week[week] = []
+        picks_by_week[week].append((pick, game))
+    
+    # Create the sidebar
+    sidebar = Div(
+        A("Back to Leaderboard", href="/leaderboard"),
+        H3("Weeks"),
+        *[A(f"Week {week}", href=f"#week-{week}") for week in range(1, 19)],
+        cls="sidebar"
+    )
+    
+    # Create tables for each week
+    week_tables = []
+    for week in sorted(picks_by_week.keys()):
+        week_picks = picks_by_week[week]
+        week_table = Table(
+            Tr(Th("Game"), Th("Pick"), Th("Type"), Th("Points"), Th("Result")),
+            *[Tr(
+                Td(f"{game['away_team']} @ {game['home_team']}"),
+                Td(pick.pick),
+                Td(pick.pick_type.capitalize()),
+                Td(f"{pick.points:.1f}"),
+                Td("Correct" if pick.correct else "Incorrect" if pick.correct is not None else "Pending")
+            ) for pick, game in week_picks],
+            id=f"week-{week}"
+        )
+        week_tables.append(H3(f"Week {week}"))
+        week_tables.append(week_table)
+        week_tables.append(Br())
+    
+    # Create the main content
+    main_content = Div(
+        P(f"Total Score: {user_score}"),
+        *week_tables,
+        cls="main-content"
+    )
+    
+    return Titled(
+        f"{user_info['dname'] or user_info['name']}'s Picks - Once Pickem",
         sidebar,
         main_content
     )

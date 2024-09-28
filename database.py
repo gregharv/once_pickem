@@ -13,6 +13,41 @@ logger = logging.getLogger(__name__)
 
 __all__ = ['db', 'Schedule', 'Pick', 'add_pick', 'get_user_picks', 'get_all_games', 'get_game', 'update_game_results', 'update_pick_correctness']
 
+TEAM_ABBREVIATIONS = {
+    "Arizona Cardinals": "ARI",
+    "Atlanta Falcons": "ATL",
+    "Baltimore Ravens": "BAL",
+    "Buffalo Bills": "BUF",
+    "Carolina Panthers": "CAR",
+    "Chicago Bears": "CHI",
+    "Cincinnati Bengals": "CIN",
+    "Cleveland Browns": "CLE",
+    "Dallas Cowboys": "DAL",
+    "Denver Broncos": "DEN",
+    "Detroit Lions": "DET",
+    "Green Bay Packers": "GB",
+    "Houston Texans": "HOU",
+    "Indianapolis Colts": "IND",
+    "Jacksonville Jaguars": "JAX",
+    "Kansas City Chiefs": "KC",
+    "Las Vegas Raiders": "LV",
+    "Los Angeles Chargers": "LAC",
+    "Los Angeles Rams": "LAR",
+    "Miami Dolphins": "MIA",
+    "Minnesota Vikings": "MIN",
+    "New England Patriots": "NE",
+    "New Orleans Saints": "NO",
+    "New York Giants": "NYG",
+    "New York Jets": "NYJ",
+    "Philadelphia Eagles": "PHI",
+    "Pittsburgh Steelers": "PIT",
+    "San Francisco 49ers": "SF",
+    "Seattle Seahawks": "SEA",
+    "Tampa Bay Buccaneers": "TB",
+    "Tennessee Titans": "TEN",
+    "Washington Commanders": "WAS"
+}
+
 @dataclass
 class Pick:
     id: int
@@ -23,6 +58,24 @@ class Pick:
     correct: bool = None
     pick_type: str = 'lock'  # 'lock' or 'upset'
     points: float = 3.0  # Default to 3 points for lock picks
+
+@dataclass
+class User:
+    user_id: str
+    name: str
+    dname: str
+
+@dataclass
+class ScheduleGame:
+    game_id: int
+    datetime: str
+    home_team: str
+    away_team: str
+    home_team_score: int
+    away_team_score: int
+    completed: bool
+    home_team_short: str
+    away_team_short: str
 
 # Create a Modal volume
 volume = modal.Volume.from_name("once-pickem-db", create_if_missing=True)
@@ -108,14 +161,15 @@ if users not in db.t:
     users.create(dict(
         user_id=str,
         name=str,
-        dname=str  # Add this new column
+        dname=str,
+        username=str  # Add this new column
     ), pk='user_id')
 else:
-    # Check if the 'dname' column exists, if not, add it
+    # Check if the 'username' column exists, if not, add it
     try:
-        db.execute('SELECT dname FROM users LIMIT 1')
+        db.execute('SELECT username FROM users LIMIT 1')
     except Exception:
-        db.execute('ALTER TABLE users ADD COLUMN dname TEXT')
+        db.execute('ALTER TABLE users ADD COLUMN username TEXT')
 
 # Add the initial mappings
 initial_mappings = {
@@ -207,17 +261,19 @@ def add_pick(user_id: str, game_id: int, pick: str, pick_type: str = 'lock', poi
 # Helper function to get the week number of a game
 def get_all_games():
     games = schedule()
-    return [Schedule(
+    return [ScheduleGame(
         game_id=game.game_id,
         datetime=game.datetime,
         home_team=game.home_team,
         away_team=game.away_team,
         home_team_score=game.home_team_score,
         away_team_score=game.away_team_score,
-        completed=game.completed
+        completed=game.completed,
+        home_team_short=TEAM_ABBREVIATIONS.get(game.home_team, game.home_team),
+        away_team_short=TEAM_ABBREVIATIONS.get(game.away_team, game.away_team)
     ) for game in games]
 
-# Function to get a specific game
+# Modify the get_game function
 def get_game(game_id: int):
     game = schedule.get(game_id)
     if game:
@@ -225,6 +281,8 @@ def get_game(game_id: int):
             'game_id': game.game_id,
             'home_team': game.home_team,
             'away_team': game.away_team,
+            'home_team_short': TEAM_ABBREVIATIONS.get(game.home_team, game.home_team),
+            'away_team_short': TEAM_ABBREVIATIONS.get(game.away_team, game.away_team),
             'datetime': game.datetime.isoformat() if isinstance(game.datetime, datetime) else game.datetime,
             'home_team_score': game.home_team_score,
             'away_team_score': game.away_team_score,
@@ -302,9 +360,22 @@ def get_user_info(user_id: str):
     user = users.get(user_id)
     if user:
         return {
+            'user_id': user.user_id,
+            'name': user.name,
+            'dname': user.dname,
+            'username': user.username
+        }
+    return None
+
+# Add this new function to get user info by username
+def get_user_info_by_username(username: str):
+    user = next(users.rows_where("username = ?", [username]), None)
+    if user:
+        return {
             'user_id': user['user_id'],
             'name': user['name'],
-            'dname': user['dname']
+            'dname': user['dname'],
+            'username': user['username']
         }
     return None
 
@@ -361,6 +432,11 @@ def get_leaderboard():
         leaderboard.append({
             'user_id': user['user_id'],
             'name': user['dname'] or user['name'],
+            'username': user['username'],
             'score': score
         })
     return sorted(leaderboard, key=lambda x: x['score'], reverse=True)
+
+def get_user_lock_picks(user_id: str):
+    user_picks = get_user_picks(user_id)
+    return set(pick.pick for pick in user_picks if pick.pick_type == 'lock')
