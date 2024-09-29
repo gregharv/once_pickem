@@ -464,7 +464,7 @@ def get(username: str, auth):
         week_table = Table(
             Tr(Th("Game"), Th("Pick"), Th("Type"), Th("Points"), Th("Result")),
             *[Tr(
-                Td(f"{game['away_team']} @ {game['home_team']}"),
+                Td(f"{game['away_team_short']} @ {game['home_team_short']}"),
                 Td(pick.pick),
                 Td(pick.pick_type.capitalize()),
                 Td(f"{pick.points:.1f}"),
