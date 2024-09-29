@@ -9,10 +9,14 @@ import requests
 import pandas as pd
 import pytz
 from fastapi.staticfiles import StaticFiles
+import logging
 
 import os
 import modal
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 js_code = """
 document.body.addEventListener('htmx:afterOnLoad', function(event) {
@@ -119,9 +123,8 @@ def home(auth, session):
     
     welcome_message = f"Welcome, {user_name}"
     login_or_user = Grid(
-        A("Change Display Name", href=f"/change_dname/{auth}", hx_get=f"/change_dname/{auth}", hx_target="#dname-form"),
         A("Logout", href='/logout'),
-        columns="1fr 1fr",
+        columns="1fr",
         style="text-align: right; gap: 10px;"
     )
     
@@ -398,6 +401,10 @@ def get(auth):
         cls="sidebar"
     )
 
+    # Add the "Change Display Name" link
+    change_name_link = A("Change Display Name", 
+                         href="/change_dname")
+
     # Create the leaderboard table
     leaderboard_table = Table(
         Tr(Th("Rank"), Th("Name"), Th("Score")),
@@ -411,6 +418,8 @@ def get(auth):
     # Create the main content
     main_content = Div(
         H1("Leaderboard"),
+        change_name_link,
+        Br(),
         leaderboard_table,
         cls="main-content"
     )
@@ -480,31 +489,40 @@ def get(username: str, auth):
         main_content
     )
 
-@rt('/change_dname/{user_id}')
-def get(user_id: str, auth):
-    if user_id != auth:
-        return "Unauthorized"
+@rt('/change_dname')
+def get(auth):
+    if not auth:
+        return "Please log in to change your display name."
     
-    user_info = get_user_info(user_id)
+    user_info = get_user_info(auth)
     if not user_info:
         return "User not found"
     
-    return Form(
-        Label("New Display Name:"),
-        Input(type="text", name="new_dname", value=user_info['dname'] or user_info['name'] or user_id),
-        Input(type="submit", value="Update"),
-        hx_post=f"/update_dname/{user_id}",
-        hx_target="#dname-form",
-        hx_swap="outerHTML"
+    return Titled(
+        "Change Display Name",
+        Form(
+            Label("New Display Name:"),
+            Input(type="text", name="new_dname", value=user_info['dname'] or user_info['name'] or auth),
+            Input(type="submit", value="Update"),
+            action="/update_dname",
+            method="post"
+        )
     )
 
-@rt('/update_dname/{user_id}')
-def post(user_id: str, new_dname: str, auth):
-    if user_id != auth:
-        return "Unauthorized"
+@rt('/update_dname')
+def post(new_dname: str, auth):
+    logger.info(f"Updating display name for user {auth} to {new_dname}")
+    if not auth:
+        logger.warning("User not authenticated")
+        return "Please log in to change your display name."
     
-    update_user_dname(user_id, new_dname)
-    return P("Display name updated successfully!")
+    try:
+        update_user_dname(auth, new_dname)
+        logger.info(f"Display name updated successfully for user {auth}")
+        return RedirectResponse('/leaderboard', status_code=303)
+    except Exception as e:
+        logger.error(f"Error updating display name for user {auth}: {str(e)}")
+        return f"An error occurred: {str(e)}"
 
 # Add the login route
 @rt('/login')
@@ -543,7 +561,7 @@ def get(code: str, session, state: str = None):
 if __name__ == "__main__":  # if invoked with `python`, run locally
     serve()
 else:  # create a modal app, which can be imported in another file or used with modal commands as in README
-    modal_app = modal.App("once_pickem")
+    modal_app = modal.App("once")
 
     # Create a Modal volume
     volume = modal.Volume.from_name("once-pickem-db", create_if_missing=True)
@@ -565,7 +583,7 @@ else:  # create a modal app, which can be imported in another file or used with 
         secrets=[odds_api_secret, github_secret],  # Include both secrets
     )
     @modal.asgi_app()
-    def fastapi_app():
+    def pickem():
         import os
         import logging
         from fastapi.staticfiles import StaticFiles
@@ -590,4 +608,4 @@ else:  # create a modal app, which can be imported in another file or used with 
         return app
 
     # Export the ASGI app as the public interface of the Modal app
-    asgi_app = fastapi_app
+    asgi_app = pickem

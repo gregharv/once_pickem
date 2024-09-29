@@ -353,7 +353,8 @@ def get_user_picks(user_id: str):
 
 # Add a new function to update user's display name
 def update_user_dname(user_id: str, new_dname: str):
-    users.update({"user_id": user_id, "dname": new_dname}, pk='user_id')
+    users.upsert({"user_id": user_id, "dname": new_dname}, pk='user_id')
+    logger.info(f"Updated display name for user {user_id} to {new_dname}")
 
 # Modify the existing function to include dname
 def get_user_info(user_id: str):

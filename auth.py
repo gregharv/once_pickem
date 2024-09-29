@@ -14,7 +14,7 @@ def set_github_secret(secret):
 
 # Set the base URL based on the environment
 if os.environ.get('MODAL_ENVIRONMENT'):
-    base_url = "https://gregharv--once-pickem-fastapi-app.modal.run"
+    base_url = "https://gregharv--once-pickem.modal.run"
 else:
     base_url = "http://localhost:5001"
 
