@@ -2,7 +2,7 @@ import os
 import requests
 import pandas as pd
 import modal
-from database import update_game_results, update_pick_correctness
+from database import update_game_results, update_pick_correctness, delete_picks_before_date
 from pathlib import Path
 from datetime import datetime
 import pytz
@@ -117,6 +117,7 @@ def update_results_friday_monday():
 )
 def update_results_sunday():
     fetch_and_process_results()
+    delete_picks_before_date(datetime(2024, 9, 17, tzinfo=pytz.UTC))
 
 if __name__ == "__main__":
     with update_results_app.run():

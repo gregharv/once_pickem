@@ -432,7 +432,7 @@ def get_leaderboard():
         score = calculate_user_score(user['user_id'])
         leaderboard.append({
             'user_id': user['user_id'],
-            'name': user['dname'] or user['name'],
+            'name': user['dname'] or user['name'] or user['username'],
             'username': user['username'],
             'score': score
         })
@@ -441,3 +441,36 @@ def get_leaderboard():
 def get_user_lock_picks(user_id: str):
     user_picks = get_user_picks(user_id)
     return set(pick.pick for pick in user_picks if pick.pick_type == 'lock')
+
+# Add this new function at the end of the file
+def delete_picks_before_date(target_date=datetime(2024, 9, 16, tzinfo=pytz.UTC)):
+    eastern = pytz.timezone('US/Eastern')
+    target_date_est = target_date.astimezone(eastern)
+    
+    # Format the target date as ISO8601 string
+    target_date_str = target_date_est.isoformat()
+    
+    logger.info(f"Attempting to delete picks before {target_date_str}")
+    
+    try:
+        # Use the date() function in SQLite for comparison
+        deleted_picks = picks.delete_where("date(timestamp) < date(?)", [target_date_str])
+        logger.info(f"Deleted picks using custom wrapper: {deleted_picks}")
+    except Exception as e:
+        logger.error(f"Error deleting picks with custom wrapper: {str(e)}")
+        raise
+
+    # Check remaining picks
+    remaining_picks = picks.rows_where("date(timestamp) < date(?)", [target_date_str])
+    remaining_count = len(list(remaining_picks))
+    logger.info(f"Remaining picks before {target_date_str}: {remaining_count}")
+
+    if remaining_count > 0:
+        logger.warning(f"There are still {remaining_count} picks before the target date that were not deleted.")
+        # Log a few remaining picks for debugging
+        for pick in list(remaining_picks)[:5]:
+            logger.warning(f"Remaining pick: {pick}")
+    else:
+        logger.info("All picks before the target date were successfully deleted.")
+
+    return remaining_count
