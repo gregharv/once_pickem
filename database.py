@@ -394,18 +394,41 @@ def update_spreads_in_database(spreads_df):
     est = pytz.timezone('US/Eastern')
     current_time = datetime.now(est).isoformat()
 
-    for _, row in spreads_df.iterrows():
-        spread_data = {
-            'game_id': row['game_id'],
-            'bookmaker': row['bookmaker'],
-            'team': row['team'],
-            'point': row['point'],
-            'price': row['price'],
-            'timestamp': current_time
-        }
-        spreads.insert(spread_data)
+    logger.info(f"Starting to update {len(spreads_df)} spread records in the database.")
+    logger.info(f"Spreads table exists: {spreads in db.t}")
+    
+    # Check if spreads table exists, create if not
+    if spreads not in db.t:
+        logger.info("Creating spreads table...")
+        spreads.create(dict(
+            id=int,
+            game_id=int,
+            bookmaker=str,
+            team=str,
+            point=float,
+            price=int,
+            timestamp=str
+        ), pk='id')
+        logger.info("Spreads table created successfully.")
 
-    logger.info(f"Updated {len(spreads_df)} spread records in the database.")
+    inserted_count = 0
+    for _, row in spreads_df.iterrows():
+        try:
+            spread_data = {
+                'game_id': row['game_id'],
+                'bookmaker': row['bookmaker'],
+                'team': row['team'],
+                'point': row['point'],
+                'price': row['price'],
+                'timestamp': current_time
+            }
+            spreads.insert(spread_data)
+            inserted_count += 1
+        except Exception as e:
+            logger.error(f"Error inserting spread data: {e}")
+            logger.error(f"Spread data: {spread_data}")
+
+    logger.info(f"Successfully inserted {inserted_count} spread records in the database.")
 
 # Add this new function to retrieve spreads for a specific game
 def get_game_spreads(game_id: int):

@@ -635,6 +635,26 @@ def db_table_view(table_name: str):
     except Exception as e:
         return {"error": str(e)}, 500
 
+@rt('/admin/db/spreads')
+def db_spreads_view():
+    """View spreads table specifically"""
+    try:
+        # Check if spreads table exists
+        tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='spreads';").fetchall()
+        if not tables:
+            return {"error": "Spreads table does not exist"}
+        
+        # Get spreads data
+        data = db.execute("SELECT * FROM spreads ORDER BY timestamp DESC LIMIT 100;").fetchall()
+        
+        return {
+            "table": "spreads",
+            "data": data,
+            "row_count": len(data)
+        }
+    except Exception as e:
+        return {"error": str(e)}, 500
+
 if __name__ == "__main__":
     # For Railway deployment, use the PORT environment variable
     port = int(os.environ.get('PORT', 8000))
