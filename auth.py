@@ -14,7 +14,12 @@ def set_google_secret(secret):
 # Set the base URL based on the environment
 if os.environ.get('RAILWAY_ENVIRONMENT'):
     # When running on Railway, use the Railway URL
-    base_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'https://nfl.critjecture.com')
+    domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'nfl.critjecture.com')
+    # Ensure we have the https:// protocol
+    if not domain.startswith('http'):
+        base_url = f"https://{domain}"
+    else:
+        base_url = domain
 else:
     # Local development
     base_url = "http://localhost:8000"
