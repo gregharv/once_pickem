@@ -607,6 +607,34 @@ def health_check():
     """Health check endpoint for monitoring"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
+@rt('/admin/db/tables')
+def db_tables():
+    """View all database tables"""
+    try:
+        tables = db.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
+        return {"tables": [table[0] for table in tables]}
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+@rt('/admin/db/table/{table_name}')
+def db_table_view(table_name: str):
+    """View contents of a specific table"""
+    try:
+        # Get table schema
+        schema = db.execute(f"PRAGMA table_info({table_name});").fetchall()
+        
+        # Get table data (limit to 1000 rows for safety)
+        data = db.execute(f"SELECT * FROM {table_name} LIMIT 1000;").fetchall()
+        
+        return {
+            "table": table_name,
+            "schema": [{"column": row[1], "type": row[2], "nullable": not row[3]} for row in schema],
+            "data": data,
+            "row_count": len(data)
+        }
+    except Exception as e:
+        return {"error": str(e)}, 500
+
 if __name__ == "__main__":
     # For Railway deployment, use the PORT environment variable
     port = int(os.environ.get('PORT', 8000))
