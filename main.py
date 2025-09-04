@@ -9,7 +9,7 @@ import os
 import requests
 import pandas as pd
 import pytz
-from fastapi.staticfiles import StaticFiles
+# FastAPI static files removed - using FastHTML native static serving
 import logging
 from pathlib import Path
 
@@ -557,10 +557,10 @@ def get(code: str, session, state: str = None):
         return RedirectResponse(url=f"/#week-{current_week}", status_code=302)
     return auth_result
 
-# Mount static files for Railway deployment
+# FastHTML handles static files automatically from the assets directory
+# No need to mount them manually - FastHTML serves static files from /assets by default
 if os.path.exists("assets"):
-    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
-    logger.info("Assets directory mounted successfully")
+    logger.info("Assets directory found - FastHTML will serve static files automatically")
 else:
     logger.warning("Assets directory not found")
 
