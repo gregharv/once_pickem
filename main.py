@@ -140,7 +140,7 @@ def home(auth, session):
     sidebar = Div(
         A("Leaderboard", href="/leaderboard"),
         H3("Weeks"),
-        *[A(f"Week {week}", href=f"#week-{week}") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
+        Ul(*[Li(A(f"Week {week}", href=f"#week-{week}")) for week in range(1, 19)]),  # Assuming 18 weeks in NFL season
         cls="sidebar"
     )
 
@@ -396,7 +396,7 @@ def get(auth):
     sidebar = Div(
         A("Picks", href=f"/#week-{current_week}"),
         H3("Weeks"),
-        *[A(f"Week {week}", href=f"#week-{week}") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
+        Ul(*[Li(A(f"Week {week}", href=f"#week-{week}")) for week in range(1, 19)]),  # Assuming 18 weeks in NFL season
         cls="sidebar"
     )
 
@@ -452,7 +452,7 @@ def get(username: str, auth):
     sidebar = Div(
         A("Back to Leaderboard", href="/leaderboard"),
         H3("Weeks"),
-        *[A(f"Week {week}", href=f"#week-{week}") for week in range(1, 19)],
+        Ul(*[Li(A(f"Week {week}", href=f"#week-{week}")) for week in range(1, 19)]),
         cls="sidebar"
     )
     
