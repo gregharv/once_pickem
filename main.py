@@ -717,7 +717,12 @@ def db_spreads_view():
 def download_db():
     """Download the database file"""
     try:
-        with open('/data/main.db', 'rb') as f:
+        db_path = '/app/data/main.db'
+        
+        if not os.path.exists(db_path):
+            return {"error": f"Database not found at {db_path}"}, 404
+            
+        with open(db_path, 'rb') as f:
             content = f.read()
         return Response(content, media_type='application/octet-stream', 
                        headers={'Content-Disposition': 'attachment; filename=main.db'})
