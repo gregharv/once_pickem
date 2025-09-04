@@ -78,37 +78,16 @@ class ScheduleGame:
 
 # Set up the main database
 # Railway provides persistent storage in the /data directory
-if os.environ.get('RAILWAY_ENVIRONMENT'):
-    # When running on Railway - try multiple persistent locations
-    possible_paths = [
-        '/data/main.db',  # Custom volume mount
-        '/tmp/main.db',   # Railway's persistent tmp directory
-        './main.db'       # Current directory (fallback)
-    ]
-    
-    db_path = None
-    for path in possible_paths:
-        try:
-            # Try to create the directory and test write access
-            dir_path = os.path.dirname(path)
-            if dir_path:
-                os.makedirs(dir_path, exist_ok=True)
-            
-            # Test write access by creating a temporary file
-            test_file = f"{path}.test"
-            with open(test_file, 'w') as f:
-                f.write('test')
-            os.remove(test_file)
-            
-            db_path = path
-            logger.info(f"Using database path: {db_path}")
-            break
-        except Exception as e:
-            logger.warning(f"Cannot use path {path}: {e}")
-            continue
-    
-    if not db_path:
-        # Final fallback
+if os.environ.get('RAILWAY_ENVIRONMENT') or os.path.exists('/data'):
+    # When running on Railway or when /data volume exists
+    db_path = '/data/main.db'
+    try:
+        # Ensure the directory exists
+        os.makedirs('/data', exist_ok=True)
+        logger.info(f"Using persistent database path: {db_path}")
+    except Exception as e:
+        logger.error(f"Cannot use persistent path {db_path}: {e}")
+        # Fallback to current directory
         db_path = './main.db'
         logger.warning(f"Using fallback database path: {db_path}")
 else:

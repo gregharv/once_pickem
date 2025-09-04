@@ -11,9 +11,11 @@ restartPolicyMaxRetries = 10
 [environments.production]
 variables = { 
     PORT = "8000",
-    RAILWAY_PUBLIC_DOMAIN = "https://nfl.critjecture.com"
+    RAILWAY_PUBLIC_DOMAIN = "https://nfl.critjecture.com",
+    RAILWAY_ENVIRONMENT = "production"
 }
 
 # Add persistent volume for database
 [[environments.production.volumes]]
 mountPath = "/data"
+source = "data-volume"
