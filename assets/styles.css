@@ -61,7 +61,7 @@ body {
 }
 
 .main-content {
-    margin-left: 130px;
+    margin-left: 240px;
     padding: 20px;
 }
 
@@ -71,6 +71,7 @@ body {
         position: static;
         width: 100%;
         padding: 10px;
+        background-color: #5f5f5f;
     }
 
     .main-content {
