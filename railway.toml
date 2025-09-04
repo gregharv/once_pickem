@@ -17,5 +17,5 @@ variables = {
 
 # Add persistent volume for database
 [[environments.production.volumes]]
-mountPath = "/data"
+mountPath = "/app/data"
 source = "data-volume"

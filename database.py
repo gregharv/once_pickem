@@ -77,13 +77,13 @@ class ScheduleGame:
     away_team_short: str
 
 # Set up the main database
-# Railway provides persistent storage in the /data directory
-if os.environ.get('RAILWAY_ENVIRONMENT') or os.path.exists('/data'):
-    # When running on Railway or when /data volume exists
-    db_path = '/data/main.db'
+# Railway provides persistent storage in the /app/data directory
+if os.environ.get('RAILWAY_ENVIRONMENT') or os.path.exists('/app/data'):
+    # When running on Railway or when /app/data volume exists
+    db_path = '/app/data/main.db'
     try:
         # Ensure the directory exists
-        os.makedirs('/data', exist_ok=True)
+        os.makedirs('/app/data', exist_ok=True)
         logger.info(f"Using persistent database path: {db_path}")
     except Exception as e:
         logger.error(f"Cannot use persistent path {db_path}: {e}")
