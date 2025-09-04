@@ -56,7 +56,7 @@ def fetch_and_process_spreads():
     spreads_df = pd.DataFrame(spreads_data)
 
     # Load the schedule data
-    schedule_df = pd.read_parquet("/app/schedule.parquet")
+    schedule_df = pd.read_parquet("schedule.parquet")
 
     # Convert commence_time to EST
     est = pytz.timezone('US/Eastern')

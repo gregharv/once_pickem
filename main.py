@@ -584,6 +584,8 @@ def update_results_endpoint():
         return {"status": "success", "message": "Game results updated successfully"}
     except Exception as e:
         logger.error(f"Error updating game results: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}, 500
 
 @rt('/admin/update_spreads')
@@ -596,6 +598,8 @@ def update_spreads_endpoint():
         return {"status": "success", "message": "Game spreads updated successfully"}
     except Exception as e:
         logger.error(f"Error updating game spreads: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}, 500
 
 @rt('/admin/health')

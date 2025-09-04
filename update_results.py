@@ -52,7 +52,7 @@ def fetch_and_process_results():
     results_fixed = results_fixed[column_order]
 
     # Load the schedule data
-    schedule_df = pd.read_parquet("/app/schedule.parquet")
+    schedule_df = pd.read_parquet("schedule.parquet")
 
     # Convert commence_time to EST
     est = pytz.timezone('US/Eastern')
