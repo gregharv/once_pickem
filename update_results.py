@@ -71,8 +71,11 @@ def fetch_and_process_results():
         how='left'
     )
 
+    # Only keep rows where we have a valid game_id from the schedule
+    merged_results = merged_results.dropna(subset=['game_id'])
+    
     # Convert game_id to integer type
-    merged_results['game_id'] = merged_results['game_id'].astype('Int64')  # This allows for NaN values
+    merged_results['game_id'] = merged_results['game_id'].astype('int64')
 
     logger.info(f"Merged results shape: {merged_results.shape}")
     logger.info(f"Merged results columns: {merged_results.columns}")

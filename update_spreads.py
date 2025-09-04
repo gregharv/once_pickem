@@ -75,12 +75,15 @@ def fetch_and_process_spreads():
         how='left'
     )
 
-    # Use the game_id from the schedule if available, otherwise use the API's game_id
-    merged_spreads['game_id'] = merged_spreads['game_id_y'].fillna(merged_spreads['game_id_x'])
+    # Only use the game_id from the schedule (integer), ignore the API's string game_id
+    merged_spreads['game_id'] = merged_spreads['game_id_y']
     merged_spreads = merged_spreads.drop(['game_id_x', 'game_id_y', 'game_date'], axis=1)
 
+    # Only keep rows where we have a valid game_id from the schedule
+    merged_spreads = merged_spreads.dropna(subset=['game_id'])
+    
     # Convert game_id to integer type
-    merged_spreads['game_id'] = merged_spreads['game_id'].astype('Int64')  # This allows for NaN values
+    merged_spreads['game_id'] = merged_spreads['game_id'].astype('int64')
 
     logger.info(f"Merged spreads shape: {merged_spreads.shape}")
     logger.info(f"Merged spreads columns: {merged_spreads.columns}")
