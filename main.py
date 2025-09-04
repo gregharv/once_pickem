@@ -33,11 +33,14 @@ function closeErrorModal() {
 def _not_found(request, exc):
     return Titled("404 Not Found", P("The page you're looking for doesn't exist."))
 
+# Read CSS content from file
+with open('static/styles.css', 'r') as f:
+    css_content = f.read()
+
 app = FastHTML(before=bware,
                exception_handlers={404: _not_found},
                hdrs=(picolink,
-                     Link(rel='stylesheet', href='/assets/styles.css', type='text/css'),
-                     Style(':root { --pico-font-size: 100%; }'),
+                     Style(css_content),
                      SortableJS('.sortable'),
                      Script(js_code))
                 )
@@ -138,9 +141,9 @@ def home(auth, session):
 
     # Create sidebar with leaderboard link and links to each week
     sidebar = Div(
-        A("Leaderboard", href="/leaderboard"),
-        H3("Weeks"),
-        Ul(*[Li(A(f"Week {week}", href=f"#week-{week}")) for week in range(1, 19)]),  # Assuming 18 weeks in NFL season
+        A("Leaderboard", href="/leaderboard", cls="nav-link"),
+        H3("Weeks", cls="nav-title"),
+        *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
         cls="sidebar"
     )
 
@@ -155,12 +158,14 @@ def home(auth, session):
 
     # Adjust main content to make room for sidebar
     main_content = Div(
-        Grid(
-            Div(H2(welcome_message)),
-            Div(login_or_user, style="text-align: right;"),
-            columns="1fr 1fr"
+        Header(
+            H1("NFL Pickem", style="margin-top: 0;"),
+            Grid(
+                Div(H2(welcome_message)),
+                Div(login_or_user, style="text-align: right;"),
+                columns="1fr 1fr"
+            )
         ),
-        Br(),  # Add a line break after the top section
         *week_tables,
         cls="main-content"
     )
@@ -179,7 +184,7 @@ def home(auth, session):
     )
 
     return Titled(
-        "Once Pickem",
+        "",
         sidebar,
         main_content,
         error_modal,
@@ -271,15 +276,15 @@ def create_game_row(game, pick, auth):
     def create_team_cell(team_full, team_short, spread, is_lock_pick):
         team_style = "color: purple;" if is_lock_pick else ""
         team_element = A(
-            Span(team_full, cls="team-name-full", style=team_style),
-            Span(team_short, cls="team-name-short", style=team_style),
+            team_short,
+            style=team_style,
             hx_post=f"/pick/{game.game_id}/{team_full}/lock",
             hx_target=f"#week-{get_game_week(game.datetime)}-table",
             hx_swap="outerHTML",
             cls="team-pick"
         ) if not game_started else Span(
-            Span(team_full, cls="team-name-full", style=team_style),
-            Span(team_short, cls="team-name-short", style=team_style)
+            team_short,
+            style=team_style
         )
 
         spread_element = ""
@@ -302,10 +307,7 @@ def create_game_row(game, pick, auth):
             Span(short_date, cls="date-short")
         ),
         Td(
-            Span(
-                Span(pick.pick, cls="team-name-full"),
-                Span(pick_short, cls="team-name-short")
-            ) if pick else "",
+            pick_short if pick else "",
             " ",
             Span("(Lock)", cls="pick-type") if pick and pick.pick_type == 'lock' else "",
             Span("(Upset)", cls="pick-type") if pick and pick.pick_type == 'upset' else "",
@@ -394,9 +396,9 @@ def get(auth):
     
     # Create the sidebar
     sidebar = Div(
-        A("Picks", href=f"/#week-{current_week}"),
-        H3("Weeks"),
-        Ul(*[Li(A(f"Week {week}", href=f"#week-{week}")) for week in range(1, 19)]),  # Assuming 18 weeks in NFL season
+        A("Picks", href=f"/#week-{current_week}", cls="nav-link"),
+        H3("Weeks", cls="nav-title"),
+        *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
         cls="sidebar"
     )
 
@@ -424,7 +426,7 @@ def get(auth):
     )
 
     return Titled(
-        "Leaderboard - Once Pickem",
+        "",
         sidebar,
         main_content
     )
@@ -450,9 +452,9 @@ def get(username: str, auth):
     
     # Create the sidebar
     sidebar = Div(
-        A("Back to Leaderboard", href="/leaderboard"),
-        H3("Weeks"),
-        Ul(*[Li(A(f"Week {week}", href=f"#week-{week}")) for week in range(1, 19)]),
+        A("Back to Leaderboard", href="/leaderboard", cls="nav-link"),
+        H3("Weeks", cls="nav-title"),
+        *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],
         cls="sidebar"
     )
     
@@ -477,13 +479,14 @@ def get(username: str, auth):
     
     # Create the main content
     main_content = Div(
+        H1(f"{user_info['dname'] or user_info['name']}'s Picks"),
         P(f"Total Score: {user_score}"),
         *week_tables,
         cls="main-content"
     )
     
     return Titled(
-        f"{user_info['dname'] or user_info['name']}'s Picks - Once Pickem",
+        "",
         sidebar,
         main_content
     )
@@ -498,13 +501,17 @@ def get(auth):
         return "User not found"
     
     return Titled(
-        "Change Display Name",
-        Form(
-            Label("New Display Name:"),
-            Input(type="text", name="new_dname", value=user_info['dname'] or user_info['name'] or auth),
-            Input(type="submit", value="Update"),
-            action="/update_dname",
-            method="post"
+        "",
+        Div(
+            H1("Change Display Name"),
+            Form(
+                Label("New Display Name:"),
+                Input(type="text", name="new_dname", value=user_info['dname'] or user_info['name'] or auth),
+                Input(type="submit", value="Update"),
+                action="/update_dname",
+                method="post"
+            ),
+            cls="main-content"
         )
     )
 
@@ -542,6 +549,22 @@ def get():
         style="margin-bottom: 20px;"
     )
     return login(extra_content=rules_explanation)
+
+# Mock login route for local development
+@rt('/mock_login')
+def get(session):
+    # Set up a mock user for local testing
+    session['user_id'] = 'local_test_user'
+    session['user_name'] = 'Local Test User'
+    session['username'] = 'test'
+    
+    # Add user to database if not exists
+    try:
+        db.t.users.upsert(dict(user_id='local_test_user', name='Local Test User', username='test'), pk='user_id')
+    except:
+        pass  # Ignore if user already exists
+    
+    return RedirectResponse('/', status_code=303)
 
 # Add the logout route
 @rt('/logout')

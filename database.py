@@ -84,8 +84,8 @@ if os.environ.get('RAILWAY_ENVIRONMENT'):
     # Ensure the /data directory exists
     os.makedirs('/data', exist_ok=True)
 else:
-    # When running locally
-    db_path = 'data/main.db'
+    # When running locally - use a different database to avoid overwriting production
+    db_path = 'data/local_dev.db'
     # Ensure the data directory exists
     os.makedirs('data', exist_ok=True)
 
