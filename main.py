@@ -654,6 +654,17 @@ def db_spreads_view():
         }
     except Exception as e:
         return {"error": str(e)}, 500
+    
+@rt('/admin/download_db')
+def download_db():
+    """Download the database file"""
+    try:
+        with open('/data/main.db', 'rb') as f:
+            content = f.read()
+        return Response(content, media_type='application/octet-stream', 
+                       headers={'Content-Disposition': 'attachment; filename=main.db'})
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 if __name__ == "__main__":
     # For Railway deployment, use the PORT environment variable

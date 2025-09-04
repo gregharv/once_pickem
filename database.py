@@ -167,16 +167,6 @@ else:
     except Exception:
         db.execute('ALTER TABLE users ADD COLUMN username TEXT')
 
-# Add the initial mappings
-initial_mappings = {
-    '18033555': 'Greg',
-    '51495669': 'Jason',
-    '182435157': 'Roger'
-}
-
-for user_id, dname in initial_mappings.items():
-    users.upsert({"user_id": user_id, "dname": dname}, pk='user_id')
-
 Users = users.dataclass()
 
 # Create dataclass for Schedule and Pick
