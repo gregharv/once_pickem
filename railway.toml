@@ -13,3 +13,7 @@ variables = {
     PORT = "8000",
     RAILWAY_PUBLIC_DOMAIN = "https://nfl.critjecture.com"
 }
+
+# Add persistent volume for database
+[[environments.production.volumes]]
+mountPath = "/data"
