@@ -19,6 +19,10 @@ else:
     # Local development
     base_url = "http://localhost:8000"
 
+print(f"DEBUG: base_url set to: {base_url}")  # Debug logging
+print(f"DEBUG: RAILWAY_ENVIRONMENT: {os.environ.get('RAILWAY_ENVIRONMENT')}")  # Debug logging
+print(f"DEBUG: RAILWAY_PUBLIC_DOMAIN: {os.environ.get('RAILWAY_PUBLIC_DOMAIN')}")  # Debug logging
+
 # Set up the Google OAuth client
 def get_google_client():
     global client
@@ -31,10 +35,10 @@ def get_google_client():
     if not client_secret or not client_id:
         raise ValueError("Google OAuth credentials are not available")
 
+    # Don't set redirect_uri in client initialization - it will be set in the login_link call
     client = GoogleAppClient(
         client_id=client_id,
         client_secret=client_secret,
-        redirect_uri=f"{base_url}/auth_redirect",
     )
     return client
 
@@ -62,7 +66,10 @@ bware = Beforeware(before, skip=['/login', '/auth_redirect'])
 # Login page
 def login(extra_content=None):
     client = get_google_client()
-    login_url = client.login_link(redirect_uri=f"{base_url}/auth_redirect")
+    redirect_uri = f"{base_url}/auth_redirect"
+    print(f"DEBUG: Using redirect_uri: {redirect_uri}")  # Debug logging
+    login_url = client.login_link(redirect_uri=redirect_uri)
+    print(f"DEBUG: Generated login_url: {login_url}")  # Debug logging
     login_button = A("Login with Google", href=login_url, cls="button")
     content = ["Login", login_button]
     if extra_content:
@@ -79,7 +86,10 @@ def auth_redirect(code:str, session, state:str=None):
     if not code: return "No code provided!"
     try:
         client = get_google_client()
-        info = client.retr_info(code, redirect_uri=f"{base_url}/auth_redirect")
+        redirect_uri = f"{base_url}/auth_redirect"
+        print(f"DEBUG: Using redirect_uri in auth_redirect: {redirect_uri}")  # Debug logging
+        print(f"DEBUG: Received code: {code}")  # Debug logging
+        info = client.retr_info(code, redirect_uri=redirect_uri)
         user_id = info[client.id_key]
         user_name = info.get('name', user_id)  # Get the user's name, fallback to user_id if not available
         email = info.get('email', '')  # Get the Google email
@@ -94,5 +104,5 @@ def auth_redirect(code:str, session, state:str=None):
         
         return RedirectResponse('/', status_code=303)
     except Exception as e:
-        print(f"Error: {e}")
-        return f"Could not log in."
+        print(f"Error in auth_redirect: {e}")
+        return f"Could not log in. Error: {str(e)}"
