@@ -1,5 +1,4 @@
 python-fasthtml
-datetime
 pandas
 sqlite_minutils
 pyarrow

@@ -2,3 +2,4 @@
 /__pycache__
 /data
 .env
+RAILWAY_DEPLOYMENT.md

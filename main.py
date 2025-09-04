@@ -1,18 +1,17 @@
 from fasthtml.common import *
-from auth import bware, login, logout, auth_redirect, set_github_secret, get_github_client
+from auth import bware, login, logout, auth_redirect, set_google_secret, get_google_client
 from database import db, ScheduleGame, Pick, add_pick, get_user_picks, get_all_games, get_game, update_game_results, update_pick_correctness, update_user_dname, get_user_info, get_game_spreads, calculate_user_score, get_leaderboard, get_user_info_by_username, get_user_lock_picks
+from update_results import fetch_and_process_results
+from update_spreads import fetch_and_process_spreads
 from datetime import datetime, timedelta
 from itertools import groupby
-import modal
-from pathlib import Path
+import os
 import requests
 import pandas as pd
 import pytz
 from fastapi.staticfiles import StaticFiles
 import logging
-
-import os
-import modal
+from pathlib import Path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -558,54 +557,53 @@ def get(code: str, session, state: str = None):
         return RedirectResponse(url=f"/#week-{current_week}", status_code=302)
     return auth_result
 
-if __name__ == "__main__":  # if invoked with `python`, run locally
-    serve()
-else:  # create a modal app, which can be imported in another file or used with modal commands as in README
-    modal_app = modal.App("once")
+# Mount static files for Railway deployment
+if os.path.exists("assets"):
+    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+    logger.info("Assets directory mounted successfully")
+else:
+    logger.warning("Assets directory not found")
 
-    # Create a Modal volume
-    volume = modal.Volume.from_name("once-pickem-db", create_if_missing=True)
+# Set up Google OAuth credentials from environment variables (Railway will provide these)
+google_client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+google_client_id = os.environ.get('GOOGLE_CLIENT_ID')
+if google_client_secret and google_client_id:
+    set_google_secret(google_client_secret)
+    logger.info("Google OAuth credentials configured from environment")
+else:
+    logger.warning("GOOGLE_CLIENT_SECRET or GOOGLE_CLIENT_ID environment variables not set")
 
-    # Create Modal secrets
-    odds_api_secret = modal.Secret.from_name("odds-api-key")
-    github_secret = modal.Secret.from_name("github-client-secret")
+# Admin endpoints for cron jobs
+@rt('/admin/update_results')
+def update_results_endpoint():
+    """Endpoint for cron-job.org to update game results"""
+    try:
+        logger.info("Starting game results update via cron job")
+        fetch_and_process_results()
+        logger.info("Game results update completed successfully")
+        return {"status": "success", "message": "Game results updated successfully"}
+    except Exception as e:
+        logger.error(f"Error updating game results: {str(e)}")
+        return {"status": "error", "message": str(e)}, 500
 
-    image = (modal.Image.debian_slim()
-             .pip_install_from_requirements(Path(__file__).parent / "requirements.txt")
-             .copy_local_file("schedule.parquet", "/app/schedule.parquet")
-             .copy_local_dir("assets", "/app/assets"))  # Add this line
+@rt('/admin/update_spreads')
+def update_spreads_endpoint():
+    """Endpoint for cron-job.org to update game spreads"""
+    try:
+        logger.info("Starting game spreads update via cron job")
+        fetch_and_process_spreads()
+        logger.info("Game spreads update completed successfully")
+        return {"status": "success", "message": "Game spreads updated successfully"}
+    except Exception as e:
+        logger.error(f"Error updating game spreads: {str(e)}")
+        return {"status": "error", "message": str(e)}, 500
 
-    @modal_app.function(
-        container_idle_timeout=300,
-        image=image,
-        allow_concurrent_inputs=1000,  # async functions can handle multiple inputs
-        volumes={"/data": volume},  # Mount the volume to /data
-        secrets=[odds_api_secret, github_secret],  # Include both secrets
-    )
-    @modal.asgi_app()
-    def pickem():
-        import os
-        import logging
-        from fastapi.staticfiles import StaticFiles
+@rt('/admin/health')
+def health_check():
+    """Health check endpoint for monitoring"""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
-        logging.basicConfig(level=logging.INFO)
-        logger = logging.getLogger(__name__)
-
-        # Log the current working directory and its contents
-        logger.info(f"Current working directory: {os.getcwd()}")
-        logger.info(f"Contents of current directory: {os.listdir()}")
-
-        # Check if the assets directory exists
-        if os.path.exists("/app/assets"):
-            logger.info("Assets directory exists")
-            logger.info(f"Contents of assets directory: {os.listdir('/app/assets')}")
-            app.mount("/assets", StaticFiles(directory="/app/assets"), name="assets")
-        else:
-            logger.warning("Assets directory does not exist")
-
-        os.environ['MODAL_ENVIRONMENT'] = 'true'
-        set_github_secret(github_secret)
-        return app
-
-    # Export the ASGI app as the public interface of the Modal app
-    asgi_app = pickem
+if __name__ == "__main__":
+    # For Railway deployment, use the PORT environment variable
+    port = int(os.environ.get('PORT', 8000))
+    serve(port=port)

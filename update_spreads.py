@@ -1,7 +1,7 @@
 import os
 import requests
 import pandas as pd
-import modal
+# Modal import removed for Railway deployment
 from database import update_spreads_in_database
 from pathlib import Path
 import logging
@@ -11,16 +11,7 @@ import pytz
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create a Modal app
-update_spreads_app = modal.App("update_spreads")
-
-# Create a Modal volume
-volume = modal.Volume.from_name("once-pickem-db", create_if_missing=True)
-
-# Define the image
-image = (modal.Image.debian_slim()
-         .pip_install_from_requirements(Path(__file__).parent / "requirements.txt")
-         .copy_local_file("schedule.parquet", "/app/schedule.parquet"))
+# Railway deployment - no Modal setup needed
 
 def fetch_and_process_spreads():
     api_key = os.environ['ODDS_API_KEY']
@@ -98,18 +89,7 @@ def fetch_and_process_spreads():
     # Update the database with the new spreads data
     update_spreads_in_database(merged_spreads)
 
-# Create a Modal function
-odds_api_secret = modal.Secret.from_name("odds-api-key")
-
-@update_spreads_app.function(
-    image=image,
-    schedule=modal.Cron("0 17 * * SUN"),  # Runs at 12pm EST every Sunday
-    volumes={"/data": volume},
-    secrets=[odds_api_secret]
-)
-def update_spreads():
-    fetch_and_process_spreads()
-
+# For Railway deployment, this can be run as a standalone script
+# or called via HTTP endpoint for scheduled execution
 if __name__ == "__main__":
-    with update_spreads_app.run():
-        update_spreads.remote()
+    fetch_and_process_spreads()

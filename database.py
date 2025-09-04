@@ -2,7 +2,6 @@ from fasthtml.common import *
 import pandas as pd
 from datetime import datetime, timedelta
 from dataclasses import dataclass
-import modal
 import os
 import pytz
 import logging
@@ -77,16 +76,18 @@ class ScheduleGame:
     home_team_short: str
     away_team_short: str
 
-# Create a Modal volume
-volume = modal.Volume.from_name("once-pickem-db", create_if_missing=True)
-
 # Set up the main database
-if os.environ.get('MODAL_ENVIRONMENT'):
-    # When running on Modal
+# Railway provides persistent storage in the /data directory
+if os.environ.get('RAILWAY_ENVIRONMENT'):
+    # When running on Railway
     db_path = '/data/main.db'
+    # Ensure the /data directory exists
+    os.makedirs('/data', exist_ok=True)
 else:
     # When running locally
     db_path = 'data/main.db'
+    # Ensure the data directory exists
+    os.makedirs('data', exist_ok=True)
 
 db = database(db_path)
 
@@ -94,12 +95,7 @@ db = database(db_path)
 schedule = db.t.schedule
 if schedule not in db.t:
     # Read the schedule from the parquet file
-    if os.environ.get('MODAL_ENVIRONMENT'):
-        # When running on Modal
-        schedule_path = '/app/schedule.parquet'
-    else:
-        # When running locally
-        schedule_path = 'schedule.parquet'
+    schedule_path = 'schedule.parquet'
     
     df = pd.read_parquet(schedule_path)
     

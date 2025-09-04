@@ -1,36 +1,38 @@
 from fasthtml.common import *
-from fasthtml.oauth import GitHubAppClient
+from fasthtml.oauth import GoogleAppClient
 from database import db
 from sqlite_minutils.db import NotFoundError
 import os
-import modal
 
-github_secret = None
+google_secret = None
 client = None
 
-def set_github_secret(secret):
-    global github_secret
-    github_secret = secret
+def set_google_secret(secret):
+    global google_secret
+    google_secret = secret
 
 # Set the base URL based on the environment
-if os.environ.get('MODAL_ENVIRONMENT'):
-    base_url = "https://gregharv--once-pickem.modal.run"
+if os.environ.get('RAILWAY_ENVIRONMENT'):
+    # When running on Railway, use the Railway URL
+    base_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'https://nfl.critjecture.com')
 else:
-    base_url = "http://localhost:5001"
+    # Local development
+    base_url = "http://localhost:8000"
 
-# Set up the GitHub OAuth client
-def get_github_client():
+# Set up the Google OAuth client
+def get_google_client():
     global client
     if client is not None:
         return client
     
-    client_secret = os.environ['GITHUB_CLIENT_SECRET']
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+    client_id = os.environ.get('GOOGLE_CLIENT_ID')
 
-    if not client_secret:
-        raise ValueError("GitHub client secret is not available")
+    if not client_secret or not client_id:
+        raise ValueError("Google OAuth credentials are not available")
 
-    client = GitHubAppClient(
-        client_id="Ov23liSrrMn8z5gaKkPd",
+    client = GoogleAppClient(
+        client_id=client_id,
         client_secret=client_secret,
         redirect_uri=f"{base_url}/auth_redirect",
     )
@@ -59,9 +61,9 @@ bware = Beforeware(before, skip=['/login', '/auth_redirect'])
 
 # Login page
 def login(extra_content=None):
-    client = get_github_client()
+    client = get_google_client()
     login_url = client.login_link(redirect_uri=f"{base_url}/auth_redirect")
-    login_button = A("Login with GitHub", href=login_url, cls="button")
+    login_button = A("Login with Google", href=login_url, cls="button")
     content = ["Login", login_button]
     if extra_content:
         content.insert(1, extra_content)  # Insert extra_content after the H1 but before the login button
@@ -76,15 +78,16 @@ def logout(session):
 def auth_redirect(code:str, session, state:str=None):
     if not code: return "No code provided!"
     try:
-        client = get_github_client()
+        client = get_google_client()
         info = client.retr_info(code, redirect_uri=f"{base_url}/auth_redirect")
         user_id = info[client.id_key]
         user_name = info.get('name', user_id)  # Get the user's name, fallback to user_id if not available
-        username = info.get('login')  # Get the GitHub username
+        email = info.get('email', '')  # Get the Google email
+        username = email.split('@')[0] if email else user_id  # Use email prefix as username
         token = client.token["access_token"]
         session['user_id'] = user_id
         session['user_name'] = user_name  # Store the user's name in the session
-        session['username'] = username  # Store the GitHub username in the session
+        session['username'] = username  # Store the username in the session
         
         # Always update or insert user information
         db.t.users.upsert(dict(user_id=user_id, name=user_name, username=username), pk='user_id')
