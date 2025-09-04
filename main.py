@@ -139,11 +139,23 @@ def home(auth, session):
     # Get user's picks, and create a dictionary with game_id as key and Pick object as value
     user_picks = {p.game_id: p for p in get_user_picks(auth) or []}
 
+    # Get current week for mobile display
+    current_week = get_current_week()
+    
     # Create sidebar with leaderboard link and links to each week
     sidebar = Div(
         A("Leaderboard", href="/leaderboard", cls="nav-link"),
         H3("Weeks", cls="nav-title"),
-        *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
+        # Desktop: show all weeks
+        Div(
+            *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],
+            cls="weeks-desktop"
+        ),
+        # Mobile: show only current week
+        Div(
+            A(f"Week {current_week}", href=f"#week-{current_week}", cls="nav-link"),
+            cls="weeks-mobile"
+        ),
         cls="sidebar"
     )
 
@@ -251,7 +263,9 @@ def create_game_row(game, pick, auth):
     away_team_short = game.away_team_short
     home_team_short = game.home_team_short
 
-    full_date = format_est_time(game.datetime)
+    # Format date/time to show day of week (3 letters), time, and month/day in parentheses
+    day_time = game_time.strftime("%a %I:%M %p (%m/%d)")
+    full_date = day_time
     short_date = game_time.strftime("%a")
 
     pick_short = get_game(pick.game_id)['away_team_short'] if pick and pick.pick == away_team_full else get_game(pick.game_id)['home_team_short'] if pick else ""
@@ -398,7 +412,16 @@ def get(auth):
     sidebar = Div(
         A("Picks", href=f"/#week-{current_week}", cls="nav-link"),
         H3("Weeks", cls="nav-title"),
-        *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],  # Assuming 18 weeks in NFL season
+        # Desktop: show all weeks
+        Div(
+            *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],
+            cls="weeks-desktop"
+        ),
+        # Mobile: show only current week
+        Div(
+            A(f"Week {current_week}", href=f"#week-{current_week}", cls="nav-link"),
+            cls="weeks-mobile"
+        ),
         cls="sidebar"
     )
 
@@ -450,11 +473,23 @@ def get(username: str, auth):
             picks_by_week[week] = []
         picks_by_week[week].append((pick, game))
     
+    # Get current week for mobile display
+    current_week = get_current_week()
+    
     # Create the sidebar
     sidebar = Div(
         A("Back to Leaderboard", href="/leaderboard", cls="nav-link"),
         H3("Weeks", cls="nav-title"),
-        *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],
+        # Desktop: show all weeks
+        Div(
+            *[A(f"Week {week}", href=f"#week-{week}", cls="nav-link") for week in range(1, 19)],
+            cls="weeks-desktop"
+        ),
+        # Mobile: show only current week
+        Div(
+            A(f"Week {current_week}", href=f"#week-{current_week}", cls="nav-link"),
+            cls="weeks-mobile"
+        ),
         cls="sidebar"
     )
     

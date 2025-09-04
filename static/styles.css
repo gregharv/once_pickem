@@ -77,12 +77,46 @@ body {
     padding: 20px;
 }
 
+/* Week navigation - show desktop version by default */
+.weeks-desktop {
+    display: block;
+}
+.weeks-mobile {
+    display: none;
+}
+
 /* Mobile responsive styles */
 @media (max-width: 768px) {
     .sidebar {
         position: static;
         width: 100%;
         padding: 10px;
+        height: auto;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+    }
+
+    .sidebar h3 {
+        display: inline-block;
+        margin: 0 10px 0 0;
+        vertical-align: middle;
+    }
+
+    .sidebar a {
+        display: inline-block;
+        padding: 5px 8px;
+        margin: 0 2px;
+        border-radius: 3px;
+        white-space: nowrap;
+    }
+
+    /* Hide desktop weeks, show mobile weeks */
+    .weeks-desktop {
+        display: none;
+    }
+    .weeks-mobile {
+        display: inline-block;
     }
 
     .main-content {
@@ -133,7 +167,7 @@ body {
     }
 }
 
-/* New styles for date display */
+/* Date/time display - full format on desktop, short on mobile */
 .date-full {
     display: inline;
 }
@@ -149,8 +183,6 @@ body {
     .date-short {
         display: inline;
     }
-
-    /* ... (rest of the mobile styles) ... */
 }
 
 /* Existing accessibility styles */
