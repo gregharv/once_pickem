@@ -143,8 +143,14 @@ def home(auth, session):
     current_week = get_current_week()
     
     # Create sidebar with leaderboard link and links to each week
+    sidebar_links = [A("Leaderboard", href="/leaderboard", cls="nav-link")]
+    
+    # Add admin link if user is gregsharvey
+    if is_admin_user(auth):
+        sidebar_links.append(A("Admin", href="/admin", cls="nav-link"))
+    
     sidebar = Div(
-        A("Leaderboard", href="/leaderboard", cls="nav-link"),
+        *sidebar_links,
         H3("Weeks", cls="nav-title"),
         # Desktop: show all weeks
         Div(
@@ -409,8 +415,14 @@ def get(auth):
     current_week = get_current_week()
     
     # Create the sidebar
+    sidebar_links = [A("Picks", href=f"/#week-{current_week}", cls="nav-link")]
+    
+    # Add admin link if user is gregsharvey
+    if is_admin_user(auth):
+        sidebar_links.append(A("Admin", href="/admin", cls="nav-link"))
+    
     sidebar = Div(
-        A("Picks", href=f"/#week-{current_week}", cls="nav-link"),
+        *sidebar_links,
         H3("Weeks", cls="nav-title"),
         # Desktop: show all weeks
         Div(
@@ -631,8 +643,288 @@ if google_client_secret and google_client_id:
 else:
     logger.warning("GOOGLE_CLIENT_SECRET or GOOGLE_CLIENT_ID environment variables not set")
 
-# Admin endpoints for cron jobs
-@rt('/admin/update_results')
+# Admin authentication check
+def is_admin_user(auth):
+    """Check if the current user is an admin (gregsharvey)"""
+    if not auth:
+        return False
+    try:
+        user = db.t.users.get(auth)
+        return user and (user.username == 'gregsharvey' or user.name == 'gregsharvey' or 'gregsharvey' in str(user.user_id).lower())
+    except:
+        return False
+
+# Admin page for managing picks
+@rt('/admin')
+def admin_page(auth):
+    """Admin page for managing picks - only accessible by gregsharvey"""
+    if not is_admin_user(auth):
+        return Titled("Access Denied", P("You do not have permission to access this page."))
+    
+    # Get all users for the dropdown
+    all_users = list(db.t.users())
+    users_list = [(user.user_id, user.dname or user.name or user.username) for user in all_users]
+    
+    # Get current week
+    current_week = get_current_week()
+    
+    # Create sidebar
+    sidebar = Div(
+        A("Back to Picks", href="/", cls="nav-link"),
+        A("Leaderboard", href="/leaderboard", cls="nav-link"),
+        H3("Admin Tools", cls="nav-title"),
+        A("Update Results", href="/admin/update_results", cls="nav-link"),
+        A("Update Spreads", href="/admin/update_spreads", cls="nav-link"),
+        cls="sidebar"
+    )
+    
+    # Create main content
+    main_content = Div(
+        H1("Admin - Pick Management"),
+        P("Select a user and week to manage their picks."),
+        
+        # User selection form
+        Form(
+            Div(
+                Label("Select User:"),
+                Select(
+                    *[Option(user_name, value=user_id) for user_id, user_name in users_list],
+                    name="selected_user",
+                    id="user-select"
+                ),
+                cls="form-group"
+            ),
+            Div(
+                Label("Select Week:"),
+                Select(
+                    *[Option(f"Week {week}", value=str(week)) for week in range(1, 19)],
+                    name="selected_week",
+                    id="week-select",
+                    value=str(current_week)
+                ),
+                cls="form-group"
+            ),
+            Button("Load Picks", type="submit", cls="primary"),
+            action="/admin/load_picks",
+            method="post",
+            hx_post="/admin/load_picks",
+            hx_target="#picks-container",
+            hx_swap="innerHTML"
+        ),
+        
+        # Container for picks display
+        Div(id="picks-container"),
+        
+        cls="main-content"
+    )
+    
+    return Titled(
+        "Admin - Pick Management",
+        sidebar,
+        main_content
+    )
+
+@rt('/admin/load_picks')
+def load_user_picks(selected_user: str, selected_week: str, auth):
+    """Load picks for a specific user and week"""
+    if not is_admin_user(auth):
+        return P("Access denied")
+    
+    try:
+        week = int(selected_week)
+        user_id = selected_user
+        
+        # Get user info
+        user_info = get_user_info(user_id)
+        if not user_info:
+            return P("User not found")
+        
+        # Get games for the week
+        week_games = get_games_for_week(week)
+        if not week_games:
+            return P(f"No games found for week {week}")
+        
+        # Get user's picks for this week
+        user_picks = get_user_picks(user_id)
+        user_picks_dict = {p.game_id: p for p in user_picks if get_game_week(get_game(p.game_id)['datetime']) == week}
+        
+        # Create picks table
+        picks_table = create_admin_picks_table(week_games, user_picks_dict, user_id, week)
+        
+        return Div(
+            H2(f"Picks for {user_info['dname'] or user_info['name']} - Week {week}"),
+            picks_table
+        )
+        
+    except Exception as e:
+        return P(f"Error loading picks: {str(e)}")
+
+def create_admin_picks_table(games, user_picks, user_id, week):
+    """Create a table for admin to manage picks"""
+    return Table(
+        Tr(
+            Th("Away Team"),
+            Th("Home Team"),
+            Th("Date/Time"),
+            Th("Current Pick"),
+            Th("Actions")
+        ),
+        *[create_admin_game_row(game, user_picks.get(game.game_id), user_id, week) for game in games],
+        id=f"admin-week-{week}-table"
+    )
+
+def create_admin_game_row(game, pick, user_id, week):
+    """Create a row for admin pick management"""
+    game_time = to_est(datetime.fromisoformat(game.datetime))
+    current_time = get_current_est_time()
+    game_started = game_time < current_time
+
+    away_team_full = game.away_team
+    home_team_full = game.home_team
+    away_team_short = game.away_team_short
+    home_team_short = game.home_team_short
+
+    # Format date/time
+    day_time = game_time.strftime("%a %I:%M %p (%m/%d)")
+    
+    # Show current pick
+    current_pick = ""
+    if pick:
+        pick_team_short = away_team_short if pick.pick == away_team_full else home_team_short
+        current_pick = f"{pick_team_short} ({pick.pick_type}, {pick.points}pts)"
+    
+    # Create action buttons - Admin can always make picks regardless of game status
+    actions = []
+    
+    # Get spreads for upset picks
+    spreads = get_game_spreads(game.game_id)
+    away_spread = None
+    home_spread = None
+    for spread in sorted(spreads, key=lambda s: s['timestamp'], reverse=True):
+        if spread['team'] == away_team_full and away_spread is None:
+            away_spread = spread
+        elif spread['team'] == home_team_full and home_spread is None:
+            home_spread = spread
+        if away_spread and home_spread:
+            break
+    
+    # Add lock pick links (always available for admin)
+    actions.extend([
+        A("A(L)", 
+          hx_post=f"/admin/add_pick/{game.game_id}/{away_team_full}/lock/{user_id}",
+          hx_target=f"#admin-week-{week}-table",
+          hx_swap="outerHTML",
+          cls="pick-link"),
+        A("H(L)", 
+          hx_post=f"/admin/add_pick/{game.game_id}/{home_team_full}/lock/{user_id}",
+          hx_target=f"#admin-week-{week}-table",
+          hx_swap="outerHTML",
+          cls="pick-link")
+    ])
+    
+    # Add upset pick links if spreads are available (always available for admin)
+    if away_spread and away_spread['point'] > 0:
+        actions.append(
+            A(f"A({away_spread['point']})", 
+              hx_post=f"/admin/add_pick/{game.game_id}/{away_team_full}/upset/{away_spread['point']}/{user_id}",
+              hx_target=f"#admin-week-{week}-table",
+              hx_swap="outerHTML",
+              cls="pick-link")
+        )
+    
+    if home_spread and home_spread['point'] > 0:
+        actions.append(
+            A(f"H({home_spread['point']})", 
+              hx_post=f"/admin/add_pick/{game.game_id}/{home_team_full}/upset/{home_spread['point']}/{user_id}",
+              hx_target=f"#admin-week-{week}-table",
+              hx_swap="outerHTML",
+              cls="pick-link")
+        )
+    
+    # Remove pick link if exists (always available for admin)
+    if pick:
+        actions.append(
+            A("Remove", 
+              hx_post=f"/admin/remove_pick/{game.game_id}/{user_id}",
+              hx_target=f"#admin-week-{week}-table",
+              hx_swap="outerHTML",
+              cls="pick-link remove-link")
+        )
+    
+    # Show game status as info but don't block actions
+    if game_started:
+        actions.append(Span("(Game Started)", cls="text-muted small"))
+
+    return Tr(
+        Td(away_team_short),
+        Td(home_team_short),
+        Td(day_time),
+        Td(current_pick),
+        Td(*actions),
+        id=f"admin-game-{game.game_id}"
+    )
+
+@rt('/admin/add_pick/{game_id:int}/{team}/lock/{user_id}')
+def admin_add_pick(game_id: int, team: str, user_id: str, auth):
+    """Admin function to add a lock pick for any user"""
+    if not is_admin_user(auth):
+        return error_response("Access denied", game_id, auth)
+    
+    try:
+        add_pick(user_id, game_id, team, pick_type='lock', points=3.0)
+        game = get_game(game_id)
+        week = get_game_week(game['datetime'])
+        week_games = get_games_for_week(week)
+        user_picks = get_user_picks(user_id)
+        user_picks_dict = {p.game_id: p for p in user_picks if get_game_week(get_game(p.game_id)['datetime']) == week}
+        return create_admin_picks_table(week_games, user_picks_dict, user_id, week)
+    except ValueError as e:
+        return error_response(str(e), game_id, auth)
+
+@rt('/admin/add_pick/{game_id:int}/{team}/upset/{points:float}/{user_id}')
+def admin_add_upset_pick(game_id: int, team: str, points: float, user_id: str, auth):
+    """Admin function to add an upset pick for any user"""
+    if not is_admin_user(auth):
+        return error_response("Access denied", game_id, auth)
+    
+    try:
+        add_pick(user_id, game_id, team, pick_type='upset', points=points)
+        game = get_game(game_id)
+        week = get_game_week(game['datetime'])
+        week_games = get_games_for_week(week)
+        user_picks = get_user_picks(user_id)
+        user_picks_dict = {p.game_id: p for p in user_picks if get_game_week(get_game(p.game_id)['datetime']) == week}
+        return create_admin_picks_table(week_games, user_picks_dict, user_id, week)
+    except ValueError as e:
+        return error_response(str(e), game_id, auth)
+
+@rt('/admin/remove_pick/{game_id:int}/{user_id}')
+def admin_remove_pick(game_id: int, user_id: str, auth):
+    """Admin function to remove a pick for any user"""
+    if not is_admin_user(auth):
+        return error_response("Access denied", game_id, auth)
+    
+    try:
+        user_picks = get_user_picks(user_id)
+        for pick in user_picks:
+            if pick.game_id == game_id:
+                db.t.picks.delete(pick.id)
+                break
+        
+        game = get_game(game_id)
+        week = get_game_week(game['datetime'])
+        week_games = get_games_for_week(week)
+        
+        # Update user_picks after removing the pick
+        user_picks = get_user_picks(user_id)
+        user_picks_dict = {p.game_id: p for p in user_picks if get_game_week(get_game(p.game_id)['datetime']) == week}
+        
+        return create_admin_picks_table(week_games, user_picks_dict, user_id, week)
+    except Exception as e:
+        return error_response(str(e), game_id, auth)
+
+# Cron job endpoints (no authentication required)
+@rt('/update_results')
 def update_results_endpoint():
     """Endpoint for cron-job.org to update game results"""
     try:
@@ -646,7 +938,7 @@ def update_results_endpoint():
         logger.error(f"Full traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}, 500
 
-@rt('/admin/update_spreads')
+@rt('/update_spreads')
 def update_spreads_endpoint():
     """Endpoint for cron-job.org to update game spreads"""
     try:

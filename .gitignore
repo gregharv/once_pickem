@@ -3,3 +3,4 @@
 /data
 .env
 RAILWAY_DEPLOYMENT.md
+main_test.db

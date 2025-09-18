@@ -30,6 +30,32 @@ a[href*="remove_pick"] {
 a[href*="remove_pick"]:hover {
     background-color: #cc0000;
 }
+
+/* Admin pick links styling */
+.pick-link {
+    color: #007bff;
+    text-decoration: none;
+    font-size: 12px;
+    margin: 1px 2px;
+    padding: 1px 3px;
+    border-radius: 2px;
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.pick-link:hover {
+    background-color: #e9ecef;
+    text-decoration: underline;
+}
+
+.remove-link {
+    color: #dc3545 !important;
+    font-weight: bold;
+}
+
+.remove-link:hover {
+    background-color: #f8d7da !important;
+}
 th {
     background-color: #5f5f5f;
 }

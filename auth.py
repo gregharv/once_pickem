@@ -82,7 +82,7 @@ def before(req, session):
     return None
 
 # Create Beforeware object
-bware = Beforeware(before, skip=['/login', '/auth_redirect', '/mock_login'])
+bware = Beforeware(before, skip=['/login', '/auth_redirect', '/mock_login', '/update_results', '/update_spreads'])
 
 # Login page
 def login(extra_content=None):
